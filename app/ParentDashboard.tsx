@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, Dimensions, Alert, ImageBackground, Modal, Pressable } from 'react-native';
-import { MaterialIcons, FontAwesome } from '@expo/vector-icons';
+import { MaterialIcons, FontAwesome, Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 const bgImage = require('../assets/images/bg.jpg');
 
@@ -75,6 +75,10 @@ export default function ParentDashboard() {
   const [announcements] = useState<Announcement[]>(initialAnnouncements);
   const [modalVisible, setModalVisible] = useState(false);
   const [focusedAnnouncement, setFocusedAnnouncement] = useState<Announcement | null>(null);
+  const [changeModalVisible, setChangeModalVisible] = useState(false);
+  const [changeTaskIdx, setChangeTaskIdx] = useState<number | null>(null);
+  const [changeReason, setChangeReason] = useState<string>('');
+  const [changeReasonOther, setChangeReasonOther] = useState<string>('');
 
   // Calculate overall progress
   const doneCount = tasks.filter(t => t.status === 'done').length;
@@ -145,6 +149,37 @@ export default function ParentDashboard() {
   const handleAnnouncementPress = (announcement: Announcement) => {
     setFocusedAnnouncement(announcement);
     setModalVisible(true);
+  };
+
+  // Handle change button click
+  const handleChangePress = (idx: number) => {
+    Alert.alert(
+      'Request Change',
+      `Are you sure you want to request a change for "${tasks[idx].title}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Yes',
+          onPress: () => {
+            setChangeTaskIdx(idx);
+            setChangeModalVisible(true);
+          },
+        },
+      ]
+    );
+  };
+
+  // Handle submit reason
+  const handleSubmitChangeReason = () => {
+    let reason = changeReason;
+    if (changeReason === 'Other') {
+      reason = changeReasonOther;
+    }
+    setChangeModalVisible(false);
+    setChangeReason('');
+    setChangeReasonOther('');
+    setChangeTaskIdx(null);
+    Alert.alert('Change Requested', `Reason: ${reason}`);
   };
 
   return (
@@ -282,15 +317,96 @@ export default function ParentDashboard() {
                   <Text style={styles.taskDetails}>{item.details}</Text>
                 )}
               </View>
-              <View style={[styles.taskStatus, item.status === 'done' ? styles.statusDone : item.status === 'ongoing' ? styles.statusOngoing : styles.statusNotDone]}>
-                {item.status === 'done' && <MaterialIcons name="check-circle" size={16} color="#2ecc40" style={{ marginRight: 4 }} />}
-                {item.status === 'ongoing' && <MaterialIcons name="access-time" size={16} color="#f1c40f" style={{ marginRight: 4 }} />}
-                {item.status === 'notdone' && <MaterialIcons name="radio-button-unchecked" size={16} color="#bbb" style={{ marginRight: 4 }} />}
-                <Text style={{ fontWeight: 'bold', fontSize: 13 }}>{statusLabel(item.status)}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={[styles.taskStatus, item.status === 'done' ? styles.statusDone : item.status === 'ongoing' ? styles.statusOngoing : styles.statusNotDone]}>
+                  {item.status === 'done' && <MaterialIcons name="check-circle" size={16} color="#2ecc40" style={{ marginRight: 4 }} />}
+                  {item.status === 'ongoing' && <MaterialIcons name="access-time" size={16} color="#f1c40f" style={{ marginRight: 4 }} />}
+                  {item.status === 'notdone' && <MaterialIcons name="radio-button-unchecked" size={16} color="#bbb" style={{ marginRight: 4 }} />}
+                  <Text style={{ fontWeight: 'bold', fontSize: 13 }}>{statusLabel(item.status)}</Text>
+                </View>
+                {/* Change button */}
+                {item.status === 'notdone' && (
+                  <TouchableOpacity
+                    style={styles.changeBtn}
+                    onPress={() => handleChangePress(index)}
+                  >
+                    <Feather name="refresh-cw" size={20} color="#2ecc40" />
+                  </TouchableOpacity>
+                )}
               </View>
             </TouchableOpacity>
           ))}
         </View>
+
+        {/* Change Reason Modal */}
+        <Modal
+          visible={changeModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setChangeModalVisible(false)}
+        >
+          <BlurView intensity={60} tint="light" style={styles.modalBlur}>
+            <View style={styles.modalCenterWrap}>
+              <View style={styles.modalAnnouncementBox}>
+                <Text style={{ fontWeight: 'bold', fontSize: 18, marginBottom: 10 }}>Reason for Change</Text>
+                <TouchableOpacity
+                  style={[styles.reasonOption, changeReason === 'Time' && styles.reasonOptionSelected]}
+                  onPress={() => setChangeReason('Time')}
+                >
+                  <Text style={styles.reasonOptionText}>Time</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.reasonOption, changeReason === 'Resources' && styles.reasonOptionSelected]}
+                  onPress={() => setChangeReason('Resources')}
+                >
+                  <Text style={styles.reasonOptionText}>Resources</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.reasonOption, changeReason === 'Other' && styles.reasonOptionSelected]}
+                  onPress={() => setChangeReason('Other')}
+                >
+                  <Text style={styles.reasonOptionText}>Other</Text>
+                </TouchableOpacity>
+                {changeReason === 'Other' && (
+                  <View style={{ marginTop: 10, width: '100%' }}>
+                    <Text style={{ fontSize: 14, color: '#222', marginBottom: 4 }}>Please specify:</Text>
+                    <View style={{ backgroundColor: '#f3f3f3', borderRadius: 8, padding: 6 }}>
+                      <Text
+                        style={{ minHeight: 32, fontSize: 15, color: '#222' }}
+                        numberOfLines={3}
+                        ellipsizeMode="tail"
+                      >
+                        {/* This is a placeholder for a TextInput, but since TextInput is not imported, use Alert for now. */}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{ marginTop: 6, alignSelf: 'flex-end' }}
+                      onPress={async () => {
+                        const input = prompt('Please specify your reason:');
+                        if (input) setChangeReasonOther(input);
+                      }}
+                    >
+                      <Text style={{ color: '#2ecc40', fontWeight: 'bold' }}>Enter Reason</Text>
+                    </TouchableOpacity>
+                    {changeReasonOther ? (
+                      <Text style={{ color: '#888', marginTop: 2 }}>Entered: {changeReasonOther}</Text>
+                    ) : null}
+                  </View>
+                )}
+                <Pressable
+                  style={[styles.modalCloseBtn, { marginTop: 18, backgroundColor: '#2ecc40', opacity: changeReason ? 1 : 0.5 }]}
+                  onPress={handleSubmitChangeReason}
+                  disabled={!changeReason || (changeReason === 'Other' && !changeReasonOther)}
+                >
+                  <Text style={styles.modalCloseBtnText}>Submit</Text>
+                </Pressable>
+                <Pressable style={[styles.modalCloseBtn, { marginTop: 8, backgroundColor: '#bbb' }]} onPress={() => setChangeModalVisible(false)}>
+                  <Text style={styles.modalCloseBtnText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
+          </BlurView>
+        </Modal>
       </ScrollView>
     </ImageBackground>
   );
@@ -687,5 +803,30 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 15,
+  },
+  changeBtn: {
+    marginLeft: 10,
+    padding: 6,
+    borderRadius: 16,
+    backgroundColor: 'rgba(46,204,64,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reasonOption: {
+    width: '100%',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#f3f3f3',
+    marginBottom: 8,
+  },
+  reasonOptionSelected: {
+    backgroundColor: '#e6ffe6',
+    borderColor: '#2ecc40',
+    borderWidth: 1.5,
+  },
+  reasonOptionText: {
+    fontSize: 16,
+    color: '#222',
   },
 }); 

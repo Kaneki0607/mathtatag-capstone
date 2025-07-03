@@ -1,10 +1,9 @@
-import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, Dimensions, ImageBackground, Modal, TextInput, Pressable, FlatList, Alert } from 'react-native';
-import { MaterialIcons, FontAwesome } from '@expo/vector-icons';
-import { Svg, Path, G, Text as SvgText, Circle, Line } from 'react-native-svg';
+import { AntDesign, FontAwesome, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { AntDesign, MaterialCommunityIcons } from '@expo/vector-icons';
-import { Picker } from '@react-native-picker/picker';
+import React, { useState } from 'react';
+import { Alert, Dimensions, FlatList, ImageBackground, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { G, Path, Svg } from 'react-native-svg';
 const bgImage = require('../assets/images/bg.jpg');
 
 const { width } = Dimensions.get('window');
@@ -25,7 +24,7 @@ interface ClassData {
   learnersPerformance: { label: string; color: string; percent: number }[];
 }
 
-type ModalType = 'addClass' | 'addStudent' | 'announce' | 'category' | 'taskInfo' | 'classList' | 'startTest' | 'editStudent' | null;
+type ModalType = 'addClass' | 'addStudent' | 'announce' | 'category' | 'taskInfo' | 'classList' | 'startTest' | 'editStudent' | 'showImprovement' | 'evaluateStudent' | null;
 
 export default function TeacherDashboard() {
   const teacherName = 'Teacher Ced';
@@ -45,6 +44,9 @@ export default function TeacherDashboard() {
   const [sortAsc, setSortAsc] = useState(true);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [editingStudentName, setEditingStudentName] = useState('');
+  const [improvementData, setImprovementData] = useState<{ student: Student, pre: number, post: number, preStatus: string, postStatus: string } | null>(null);
+  const [evaluationData, setEvaluationData] = useState<{ student: Student, classId: string } | null>(null);
+  const [evaluationText, setEvaluationText] = useState('');
 
   // Use theme-matching harmonious colors for the chart
   const defaultCategories = [
@@ -55,7 +57,7 @@ export default function TeacherDashboard() {
     { label: 'Highly Proficient', color: '#27ae60' },// main green
   ];
 
-  // Update defaultClasses with realistic data, including highly proficient students
+  // Update defaultClasses with more realistic, varied data
   const defaultClasses = [
     {
       id: '1',
@@ -92,15 +94,15 @@ export default function TeacherDashboard() {
       school: 'San Isidro ES',
       section: 'CAS',
       students: [
-        { id: '1', studentNumber: 'CAS-2025-001', nickname: 'Mark Cruz', category: 'Intervention' },
-        { id: '2', studentNumber: 'CAS-2025-002', nickname: 'Liza Sison', category: 'Consolidation' },
-        { id: '3', studentNumber: 'CAS-2025-003', nickname: 'Jomar Dela Peña', category: 'Enhancement' },
-        { id: '4', studentNumber: 'CAS-2025-004', nickname: 'Mia Santos', category: 'Proficient' },
-        { id: '5', studentNumber: 'CAS-2025-005', nickname: 'Ella Ramos', category: 'Highly Proficient' },
-        { id: '6', studentNumber: 'CAS-2025-006', nickname: 'Nico Lim', category: 'Highly Proficient' },
-        { id: '7', studentNumber: 'CAS-2025-007', nickname: 'Rhea Tan', category: 'Enhancement' },
-        { id: '8', studentNumber: 'CAS-2025-008', nickname: 'Paolo Go', category: 'Proficient' },
-        { id: '9', studentNumber: 'CAS-2025-009', nickname: 'Janelle Uy', category: 'Highly Proficient' },
+        { id: '10', studentNumber: 'CAS-2025-001', nickname: 'Mark Cruz', category: 'Intervention' },
+        { id: '11', studentNumber: 'CAS-2025-002', nickname: 'Liza Sison', category: 'Consolidation' },
+        { id: '12', studentNumber: 'CAS-2025-003', nickname: 'Jomar Dela Peña', category: 'Enhancement' },
+        { id: '13', studentNumber: 'CAS-2025-004', nickname: 'Mia Santos', category: 'Proficient' },
+        { id: '14', studentNumber: 'CAS-2025-005', nickname: 'Ella Ramos', category: 'Highly Proficient' },
+        { id: '15', studentNumber: 'CAS-2025-006', nickname: 'Nico Lim', category: 'Highly Proficient' },
+        { id: '16', studentNumber: 'CAS-2025-007', nickname: 'Rhea Tan', category: 'Enhancement' },
+        { id: '17', studentNumber: 'CAS-2025-008', nickname: 'Paolo Go', category: 'Proficient' },
+        { id: '18', studentNumber: 'CAS-2025-009', nickname: 'Janelle Uy', category: 'Highly Proficient' },
       ],
       tasks: [
         { title: 'Intervention', details: 'Phonics drill', status: 'done' },
@@ -158,6 +160,9 @@ export default function TeacherDashboard() {
     setSelectedClassId(null);
     setEditingStudent(null);
     setEditingStudentName('');
+    setImprovementData(null);
+    setEvaluationData(null);
+    setEvaluationText('');
   };
 
   // Add new class
@@ -376,8 +381,8 @@ export default function TeacherDashboard() {
         alignItems: 'center',
         justifyContent: 'center',
         width: containerWidth,
-        marginBottom: 24,
-        paddingHorizontal: 8,
+        marginBottom: 3,
+        paddingHorizontal: 0,
         paddingVertical: 12,
         alignSelf: 'center',
         backgroundColor: 'rgba(255,255,255,0.92)',
@@ -546,6 +551,46 @@ export default function TeacherDashboard() {
     };
     const windowWidth = Dimensions.get('window').width;
     const isSmall = windowWidth < 400;
+    // Compute class average improvement and post-test average for this class
+    const demoStudentScores: Record<string, { pre?: number; post?: number }> = {
+      '1': { pre: 2, post: 8 },    // +300% (big improvement)
+      '2': { pre: 3, post: 2 },    // -33% (decline)
+      '3': { pre: 6, post: 7 },    // +17%
+      '4': { pre: 5, post: 5 },    // 0%
+      '5': { pre: 7, post: 10 },   // +43%
+      '6': { pre: 4, post: 2 },    // -50%
+      '7': { pre: 0 },             // Only pre
+      '8': { pre: 5, post: 6 },    // +20%
+      '9': { pre: 8, post: 8 },    // 0%
+      '10': { pre: 6, post: 3 },   // -50%
+      '11': { pre: 4, post: 7 },   // +75%
+      '12': { pre: 2, post: 1 },   // -50%
+      '13': { pre: 5, post: 9 },   // +80%
+      '14': { pre: 7, post: 7 },   // 0%
+      '15': { pre: 8, post: 10 },  // +25%
+      '16': { pre: 3, post: 2 },   // -33%
+      '17': { pre: 6, post: 6 },   // 0%
+      '18': { pre: 7, post: 8 },   // +14%
+    };
+    const studentsWithBoth = cls.students.filter(s => {
+      const scores = demoStudentScores[s.id] || {};
+      return typeof scores.pre === 'number' && typeof scores.post === 'number';
+    });
+    let avgImprovement = 0;
+    let avgPost = 0;
+    if (studentsWithBoth.length > 0) {
+      const improvements = studentsWithBoth.map(s => {
+        const scores = demoStudentScores[s.id];
+        const pre = scores?.pre ?? 0;
+        const post = scores?.post ?? 0;
+        return pre === 0 ? 100 : ((post - pre) / pre) * 100;
+      });
+      avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
+      avgPost = Math.round(studentsWithBoth.map(s => demoStudentScores[s.id]?.post ?? 0).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
+    }
+    let avgImprovementColor = '#ffe066';
+    if (avgImprovement > 0) avgImprovementColor = '#27ae60';
+    else if (avgImprovement < 0) avgImprovementColor = '#ff5a5a';
     return (
       <LinearGradient colors={['#f7fafc', '#e0f7fa']} style={[styles.classCard, { marginBottom: 15, padding: 2, borderRadius: 32, shadowColor: '#27ae60', shadowOpacity: 0.13, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 10, width: '100%', maxWidth: 540, alignSelf: 'center' }]}> 
         <View style={{ padding: isSmall ? 16 : 24, paddingBottom: isSmall ? 0 : 8 }}>
@@ -573,6 +618,35 @@ export default function TeacherDashboard() {
             <AnalyticsPieChartWithLegend data={cls.learnersPerformance} title="Pretest Performance" />
             <View style={{ height: 10 }} />
             <AnalyticsPieChartWithLegend data={cls.learnersPerformance} reverse title="Posttest Performance" />
+            {/* Class averages below posttest chart */}
+            <View style={styles.compactCardRow}>
+              {/* Avg. Improvement */}
+              <View style={styles.compactCardCol}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                  <MaterialIcons name="trending-up" size={20} color={avgImprovementColor} style={{ marginRight: 4 }} />
+                  <Text style={styles.compactCardLabel}>Avg. Improvement</Text>
+                  <Pressable onPress={() => Alert.alert('Average Improvement', 'This shows the average percentage improvement from pre-test to post-test for students who took both tests.')}
+                    style={{ marginLeft: 2 }}>
+                    <MaterialIcons name="info-outline" size={13} color="#888" />
+                  </Pressable>
+                </View>
+                <Text style={[styles.compactCardValue, { color: avgImprovementColor }]}>{avgImprovement > 0 ? '+' : ''}{avgImprovement}%</Text>
+              </View>
+              {/* Divider */}
+              <View style={styles.compactCardDivider} />
+              {/* Avg. Post-test */}
+              <View style={styles.compactCardCol}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                  <MaterialIcons name="bar-chart" size={20} color="#0097a7" style={{ marginRight: 4 }} />
+                  <Text style={styles.compactCardLabel}>Avg. Post-test</Text>
+                  <Pressable onPress={() => Alert.alert('Average Post-test', 'This shows the average post-test score (out of 10) for students who took both tests.')}
+                    style={{ marginLeft: 2 }}>
+                    <MaterialIcons name="info-outline" size={13} color="#888" />
+                  </Pressable>
+                </View>
+                <Text style={[styles.compactCardValue, { color: '#0097a7' }]}>{avgPost}/10</Text>
+              </View>
+            </View>
           </View>
         </View>
       </LinearGradient>
@@ -667,15 +741,18 @@ export default function TeacherDashboard() {
         // Realistic demo: some students have only pre, some both, none post without pre
         const demoStudentScores: Record<string, { pre?: number; post?: number }> = {
           // id: { pre, post }
-          '1': { pre: 2, post: 8 }, // Highly Proficient
-          '2': { pre: 3, post: 4 }, // For Consolidation
-          '3': { pre: 6, post: 7 }, // Proficient
-          '4': { pre: 1 }, // Only pre, Intervention
-          '5': { pre: 7, post: 9 }, // Highly Proficient
-          '6': { pre: 4, post: 5 }, // For Enhancement
+          '1': { pre: 2, post: 8 }, // +300% (green)
+          '2': { pre: 3, post: 4 }, // +33% (green)
+          '3': { pre: 6, post: 7 }, // +17% (green)
+          '4': { pre: 5, post: 5 }, // 0% (yellow)
+          '5': { pre: 7, post: 6 }, // -14% (red)
+          '6': { pre: 4, post: 5 }, // +25% (green)
           '7': { pre: 0 }, // Only pre, Intervention
-          '8': { pre: 5, post: 6 }, // For Enhancement
-          '9': { pre: 8, post: 8 }, // Highly Proficient
+          '8': { pre: 5, post: 6 }, // +20% (green)
+          '9': { pre: 8, post: 8 }, // 0% (yellow)
+          '10': { pre: 6, post: 3 }, // -50% (red)
+          '11': { pre: 4, post: 4 }, // 0% (yellow)
+          '12': { pre: 2, post: 1 }, // -50% (red)
         };
         const getStudentTestStatus = (student: Student, type: 'pre' | 'post') => {
           const scores = demoStudentScores[student.id] || {};
@@ -744,9 +821,40 @@ export default function TeacherDashboard() {
             setSortAsc(true);
           }
         };
+        // Compute class average improvement and post-test average
+        const studentsWithBoth = cls.students.filter(s => {
+          const scores = demoStudentScores[s.id] || {};
+          return typeof scores.pre === 'number' && typeof scores.post === 'number';
+        });
+        let avgImprovement = 0;
+        let avgPost = 0;
+        if (studentsWithBoth.length > 0) {
+          const improvements = studentsWithBoth.map(s => {
+            const scores = demoStudentScores[s.id];
+            const pre = scores?.pre ?? 0;
+            const post = scores?.post ?? 0;
+            return pre === 0 ? 100 : ((post - pre) / pre) * 100;
+          });
+          avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
+          avgPost = Math.round(studentsWithBoth.map(s => demoStudentScores[s.id]?.post ?? 0).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
+        }
+        let avgImprovementColor = '#ffe066';
+        if (avgImprovement > 0) avgImprovementColor = '#27ae60';
+        else if (avgImprovement < 0) avgImprovementColor = '#ff5a5a';
         return (
-          <View style={[styles.modalBox, { backgroundColor: 'rgba(255,255,255,0.98)' }]}>
+          <View style={[styles.modalBox, { backgroundColor: 'rgba(255,255,255,0.98)' }]}> 
             <Text style={[styles.modalTitle, { marginBottom: 8 }]}>Class List</Text>
+            {/* Class averages */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10 }}>
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                <Text style={{ fontWeight: 'bold', fontSize: 14, color: '#222' }}>Avg. Improvement</Text>
+                <Text style={{ fontWeight: 'bold', fontSize: 18, color: avgImprovementColor }}>{avgImprovement > 0 ? '+' : ''}{avgImprovement}%</Text>
+              </View>
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                <Text style={{ fontWeight: 'bold', fontSize: 14, color: '#222' }}>Avg. Post-test</Text>
+                <Text style={{ fontWeight: 'bold', fontSize: 18, color: '#0097a7' }}>{avgPost}/10</Text>
+              </View>
+            </View>
             {/* Column header row */}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, minWidth: 340 }}>
               <TouchableOpacity style={{ flex: 1, minWidth: 90 }} onPress={() => handleSort('name')}>
@@ -783,18 +891,45 @@ export default function TeacherDashboard() {
                 renderItem={({ item }) => {
                   const preStatus = getStudentTestStatus(item, 'pre');
                   const postStatus = getStudentTestStatus(item, 'post');
+                  const bothTaken = preStatus.taken && postStatus.taken;
                   return (
                     <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 18, marginBottom: 14, padding: 14, minWidth: 340, gap: 10, elevation: 2, shadowColor: '#27ae60', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }}>
                       <View style={{ flex: 1, minWidth: 90 }}>
                         <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222', marginBottom: 2 }}>{item.nickname}</Text>
                         <Text style={{ color: '#888', fontSize: 13 }}>{item.studentNumber}</Text>
                       </View>
-                      {/* Pre-test button/status */}
-                      {preStatus.taken ? (
+                      {/* Pre-test button/status or improvement */}
+                      {bothTaken ? (
+                        (() => {
+                          let btnColor = '#ffe066'; // yellow for 0
+                          let percent = 0;
+                          if (typeof preStatus.score === 'number' && typeof postStatus.score === 'number') {
+                            percent = preStatus.score === 0 ? 100 : Math.round(((postStatus.score - preStatus.score) / preStatus.score) * 100);
+                            if (percent > 0) btnColor = '#27ae60'; // green
+                            else if (percent < 0) btnColor = '#ff5a5a'; // red
+                          }
+                          return (
+                            <TouchableOpacity
+                              style={{ backgroundColor: btnColor, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, minWidth: 90, alignItems: 'center', marginRight: 4 }}
+                              onPress={() => {
+                                setImprovementData({
+                                  student: item,
+                                  pre: typeof preStatus.score === 'number' ? preStatus.score : 0,
+                                  post: typeof postStatus.score === 'number' ? postStatus.score : 0,
+                                  preStatus: preStatus.category,
+                                  postStatus: postStatus.category,
+                                });
+                                openModal('showImprovement');
+                              }}
+                            >
+                              <Text style={{ color: btnColor === '#ffe066' ? '#222' : '#fff', fontWeight: 'bold', fontSize: 12 }}>{percent > 0 ? '+' : ''}{percent}%</Text>
+                            </TouchableOpacity>
+                          );
+                        })()
+                      ) : preStatus.taken ? (
                         <View style={{ alignItems: 'center', marginRight: 4, minWidth: 90 }}>
                           <TouchableOpacity
                             style={{ backgroundColor: '#e0f7fa', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, minWidth: 90, alignItems: 'center' }}
-                            onLongPress={() => {/* Add retake logic here */}}
                           >
                             <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 12 }}>Pre: {preStatus.score}/{preStatus.total}</Text>
                           </TouchableOpacity>
@@ -808,12 +943,22 @@ export default function TeacherDashboard() {
                           <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>Pre-test</Text>
                         </TouchableOpacity>
                       )}
-                      {/* Post-test button/status */}
-                      {postStatus.taken ? (
+                      {/* Post-test button/status or evaluate */}
+                      {bothTaken ? (
+                        <TouchableOpacity
+                          style={{ backgroundColor: '#6c63ff', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, minWidth: 90, alignItems: 'center', marginRight: 4 }}
+                          onPress={() => {
+                            setEvaluationData({ student: item, classId: cls.id });
+                            setEvaluationText('');
+                            openModal('evaluateStudent');
+                          }}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>Evaluate</Text>
+                        </TouchableOpacity>
+                      ) : postStatus.taken ? (
                         <View style={{ alignItems: 'center', marginRight: 4, minWidth: 90 }}>
                           <TouchableOpacity
                             style={{ backgroundColor: '#e0f7fa', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, minWidth: 90, alignItems: 'center' }}
-                            onLongPress={() => {/* Add retake logic here */}}
                           >
                             <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 12 }}>Post: {postStatus.score}/{postStatus.total}</Text>
                           </TouchableOpacity>
@@ -827,7 +972,7 @@ export default function TeacherDashboard() {
                           <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>Post-test</Text>
                         </TouchableOpacity>
                       )}
-                      {/* Edit button */}
+                      {/* Edit and Delete buttons remain unchanged */}
                       <TouchableOpacity style={{ backgroundColor: '#0a7ea4', borderRadius: 8, padding: 6, marginRight: 4 }} onPress={() => {
                         setEditingStudent(item);
                         setEditingStudentName(item.nickname);
@@ -835,7 +980,6 @@ export default function TeacherDashboard() {
                       }}>
                         <MaterialIcons name="edit" size={18} color="#fff" />
                       </TouchableOpacity>
-                      {/* Delete button */}
                       <TouchableOpacity style={{ backgroundColor: '#ff5a5a', borderRadius: 8, padding: 6 }} onPress={() => {
                         Alert.alert('Delete Student', `Are you sure you want to delete ${item.nickname}?`, [
                           { text: 'Cancel', style: 'cancel' },
@@ -953,58 +1097,104 @@ export default function TeacherDashboard() {
             </View>
           </View>
         );
+      case 'showImprovement':
+        if (!improvementData) return null;
+        const { student, pre, post, preStatus, postStatus } = improvementData;
+        const percent = pre === 0 ? 100 : Math.round(((post - pre) / pre) * 100);
+        let percentColor = '#ffe066'; // yellow by default
+        if (percent > 0) percentColor = '#27ae60'; // green
+        else if (percent < 0) percentColor = '#ff5a5a'; // red
+        return (
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Improvement Details</Text>
+            <Text style={styles.modalStat}>Student: <Text style={styles.modalStatNum}>{student.nickname}</Text></Text>
+            <Text style={styles.modalStat}>Pre-test: <Text style={styles.modalStatNum}>{pre}/10</Text> ({preStatus})</Text>
+            <Text style={styles.modalStat}>Post-test: <Text style={styles.modalStatNum}>{post}/10</Text> ({postStatus})</Text>
+            <Text style={styles.modalStat}>Improvement: <Text style={[styles.modalStatNum, { color: percentColor }]}>{percent > 0 ? '+' : ''}{percent}%</Text></Text>
+            <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
+          </View>
+        );
+      case 'evaluateStudent':
+        if (!evaluationData) return null;
+        return (
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Send Evaluation to Parent</Text>
+            <Text style={styles.modalStat}>Student: <Text style={styles.modalStatNum}>{evaluationData.student.nickname}</Text></Text>
+            <TextInput
+              style={[styles.modalInput, { minHeight: 80, textAlignVertical: 'top' }]}
+              placeholder="Type your evaluation here..."
+              value={evaluationText}
+              onChangeText={setEvaluationText}
+              multiline
+              numberOfLines={4}
+            />
+            <View style={styles.modalBtnRow}>
+              <Pressable style={styles.modalBtn} onPress={closeModal}><Text style={styles.modalBtnText}>Cancel</Text></Pressable>
+              <Pressable style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={() => {
+                Alert.alert('Send Evaluation', 'Are you sure you want to send this evaluation to the parent?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Send', style: 'destructive', onPress: () => { setEvaluationText(''); closeModal(); } },
+                ]);
+              }}><Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Send Evaluation</Text></Pressable>
+            </View>
+          </View>
+        );
       default:
         return null;
     }
   };
 
   return (
-    <ImageBackground source={bgImage} style={styles.bg} imageStyle={{ opacity: 0.13, resizeMode: 'cover' }}>
-      <ScrollView contentContainerStyle={{ alignItems: 'center', paddingBottom: 32, paddingHorizontal: 0, width: '100%' }}>
-        <View style={{ width: '100%', maxWidth: 600, marginTop: 0 }}>
-        <View style={styles.headerWrap}>
-          <View style={styles.headerRow}>
-            <View>
-              <Text style={styles.welcome}>Welcome,</Text>
-                <Text style={styles.teacherName}>{teacherName}</Text>
+    <View style={{ flex: 1 }}>
+      <ImageBackground source={bgImage} style={styles.bg} imageStyle={{ opacity: 0.13, resizeMode: 'cover' }}>
+        {/* Overlay for better blending (non-blocking) */}
+        <View style={styles.bgOverlay} />
+        <SafeAreaView style={{ flex: 1 }}>
+          <ScrollView contentContainerStyle={styles.scrollContent}>
+            <View style={styles.mainContainer}>
+              <View style={styles.headerWrap}>
+                <View style={styles.headerRow}>
+                  <View>
+                    <Text style={styles.welcome}>Welcome,</Text>
+                    <Text style={styles.teacherName}>{teacherName}</Text>
+                  </View>
+                  <TouchableOpacity style={styles.profileBtn}>
+                    <FontAwesome name="user-circle" size={38} color="#27ae60" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={dashboardCardStyle}>
+                {/* Title and Add Class in a single row */}
+                <View style={styles.dashboardHeaderRow}>
+                  <Text style={styles.dashboardTitle}>Classrooms</Text>
+                  <TouchableOpacity style={styles.addClassBtn} onPress={() => openModal('addClass')}>
+                    <Text style={styles.addClassBtnText}>Add Class</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={{ height: 8 }} />
+                <AnalyticsCards />
+                {classes.map(cls => (
+                  <React.Fragment key={cls.id}>
+                    {renderClassPanel(cls)}
+                  </React.Fragment>
+                ))}
+              </View>
             </View>
-            <TouchableOpacity style={styles.profileBtn}>
-              <FontAwesome name="user-circle" size={38} color="#27ae60" />
-            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+        {/* Modal for all actions */}
+        <Modal
+          visible={modalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={closeModal}
+        >
+          <View style={styles.modalOverlay}>
+            {renderModalContent()}
           </View>
-        </View>
-
-          <View style={dashboardCardStyle}>
-            {/* Title and Add Class in a single row */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, marginTop: 0, width: '100%' }}>
-              <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#222', marginLeft: 8, letterSpacing: 1, textShadowColor: '#e0ffe6', textShadowRadius: 6 }}>Classrooms</Text>
-              <TouchableOpacity style={{ backgroundColor: '#27ae60', borderRadius: 18, paddingVertical: 8, paddingHorizontal: 18, shadowColor: '#27ae60', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, marginRight: 8 }} onPress={() => openModal('addClass')}>
-                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 14 }}>Add Class</Text>
-            </TouchableOpacity>
-          </View>
-            {/* Add space before class cards */}
-            <View style={{ height: 8 }} />
-            <AnalyticsCards />
-            {classes.map(cls => (
-              <React.Fragment key={cls.id}>
-                {renderClassPanel(cls)}
-              </React.Fragment>
-            ))}
-            </View>
-        </View>
-      </ScrollView>
-      {/* Modal for all actions */}
-      <Modal
-        visible={modalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closeModal}
-      >
-        <View style={styles.modalOverlay}>
-          {renderModalContent()}
-        </View>
-      </Modal>
-    </ImageBackground>
+        </Modal>
+      </ImageBackground>
+    </View>
   );
 }
 
@@ -1012,6 +1202,61 @@ const styles = StyleSheet.create({
   bg: {
     flex: 1,
     backgroundColor: '#f7fafc',
+    position: 'relative',
+  },
+  bgOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.75)',
+    zIndex: 0,
+    pointerEvents: 'none',
+  },
+  scrollContent: {
+    alignItems: 'center',
+    paddingBottom: 32,
+    paddingHorizontal: 16,
+    width: '100%',
+    minHeight: '100%',
+    zIndex: 2,
+  },
+  mainContainer: {
+    width: '100%',
+    maxWidth: 600,
+    marginTop: 0,
+    zIndex: 2,
+  },
+  dashboardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    marginTop: 0,
+    width: '100%',
+    paddingHorizontal: 8,
+  },
+  dashboardTitle: {
+    fontSize: Dimensions.get('window').width < 400 ? 20 : 26,
+    fontWeight: 'bold',
+    color: '#222',
+    marginLeft: 0,
+    letterSpacing: 1,
+    textShadowColor: '#e0ffe6',
+    textShadowRadius: 6,
+  },
+  addClassBtn: {
+    backgroundColor: '#27ae60',
+    borderRadius: 18,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    shadowColor: '#27ae60',
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    marginRight: 0,
+  },
+  addClassBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
   },
   headerWrap: {
     width: '100%',
@@ -1275,15 +1520,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalBox: {
-    width: '85%',
+    width: Dimensions.get('window').width < 400 ? '98%' : '85%',
+    maxWidth: 420,
     backgroundColor: 'rgba(255,255,255,0.98)',
     borderRadius: 22,
-    padding: 24,
+    padding: Dimensions.get('window').width < 400 ? 12 : 24,
     shadowColor: '#27ae60',
     shadowOpacity: 0.13,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 4 },
     alignItems: 'stretch',
+    alignSelf: 'center',
   },
   modalTitle: {
     fontSize: 20,
@@ -1461,5 +1708,46 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 15,
     letterSpacing: 0.2,
+  },
+  compactCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e0f7e2',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 2,
+    width: '99%',
+    maxWidth: 370,
+    alignSelf: 'center',
+    shadowColor: 'transparent',
+  },
+  compactCardCol: {
+    flex: 1,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    minWidth: 80,
+  },
+  compactCardLabel: {
+    fontWeight: '600',
+    color: '#222',
+    fontSize: 13,
+    marginRight: 2,
+  },
+  compactCardValue: {
+    fontWeight: 'bold',
+    fontSize: 22,
+    marginTop: 0,
+    letterSpacing: 0.2,
+  },
+  compactCardDivider: {
+    width: 1,
+    height: 38,
+    backgroundColor: '#e0f7e2',
+    marginHorizontal: 12,
+    borderRadius: 1,
   },
 }); 
