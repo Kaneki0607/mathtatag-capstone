@@ -1,9 +1,13 @@
-import { AntDesign, FontAwesome, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { AntDesign, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useState } from 'react';
+import { createUserWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
+import { get, onValue, ref, remove, set, update } from 'firebase/database';
+import React, { useEffect, useState } from 'react';
 import { Alert, Dimensions, FlatList, ImageBackground, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { G, Path, Svg } from 'react-native-svg';
+import { auth, db } from '../constants/firebaseConfig';
+
 const bgImage = require('../assets/images/bg.jpg');
 
 const { width } = Dimensions.get('window');
@@ -13,12 +17,17 @@ interface Student {
   studentNumber: string;
   nickname: string;
   category: string;
+  preScore?: number;
+  postScore?: number;
+  classId: string;
+  parentId?: string;
 }
 
 interface ClassData {
   id: string;
   school: string;
   section: string;
+  teacherId: string;
   students: Student[];
   tasks: { title: string; details: string; status: string }[];
   learnersPerformance: { label: string; color: string; percent: number }[];
@@ -27,11 +36,13 @@ interface ClassData {
 type ModalType = 'addClass' | 'addStudent' | 'announce' | 'category' | 'taskInfo' | 'classList' | 'startTest' | 'editStudent' | 'showImprovement' | 'evaluateStudent' | null;
 
 export default function TeacherDashboard() {
-  const teacherName = 'Teacher Ced';
+  const [currentTeacher, setCurrentTeacher] = useState<any>(null);
+  const [teacherName, setTeacherName] = useState('');
   const [modalType, setModalType] = useState<ModalType>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [classSection, setClassSection] = useState('');
   const [classSchool, setClassSchool] = useState('');
+  const [className, setClassName] = useState('');
   const [studentNickname, setStudentNickname] = useState('');
   const [announceText, setAnnounceText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -47,6 +58,8 @@ export default function TeacherDashboard() {
   const [improvementData, setImprovementData] = useState<{ student: Student, pre: number, post: number, preStatus: string, postStatus: string } | null>(null);
   const [evaluationData, setEvaluationData] = useState<{ student: Student, classId: string } | null>(null);
   const [evaluationText, setEvaluationText] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Use theme-matching harmonious colors for the chart
   const defaultCategories = [
@@ -57,74 +70,108 @@ export default function TeacherDashboard() {
     { label: 'Highly Proficient', color: '#27ae60' },// main green
   ];
 
-  // Update defaultClasses with more realistic, varied data
-  const defaultClasses = [
-    {
-      id: '1',
-      school: 'Camohaguin ES',
-      section: 'ERM',
-      students: [
-        { id: '1', studentNumber: 'ERM-2025-001', nickname: 'Juan Dela Cruz', category: 'Intervention' },
-        { id: '2', studentNumber: 'ERM-2025-002', nickname: 'Maria Santos', category: 'Consolidation' },
-        { id: '3', studentNumber: 'ERM-2025-003', nickname: 'Pedro Reyes', category: 'Enhancement' },
-        { id: '4', studentNumber: 'ERM-2025-004', nickname: 'Ana Garcia', category: 'Proficient' },
-        { id: '5', studentNumber: 'ERM-2025-005', nickname: 'Luis Martinez', category: 'Highly Proficient' },
-        { id: '6', studentNumber: 'ERM-2025-006', nickname: 'Carmen Lopez', category: 'Highly Proficient' },
-        { id: '7', studentNumber: 'ERM-2025-007', nickname: 'Roberto Torres', category: 'Enhancement' },
-        { id: '8', studentNumber: 'ERM-2025-008', nickname: 'Isabel Flores', category: 'Proficient' },
-        { id: '9', studentNumber: 'ERM-2025-009', nickname: 'Jessa Lim', category: 'Highly Proficient' },
-      ],
-      tasks: [
-        { title: 'Intervention', details: 'Remedial reading session', status: 'done' },
-        { title: 'Consolidation', details: 'Math group activity', status: 'ongoing' },
-        { title: 'Enhancement', details: 'Science project', status: 'done' },
-        { title: 'Proficient', details: 'Essay writing', status: 'done' },
-        { title: 'Highly Proficient', details: 'Quiz bee', status: 'done' },
-      ],
-      learnersPerformance: [
-        { label: 'Intervention', color: '#ff5a5a', percent: 11 },
-        { label: 'Consolidation', color: '#ffb37b', percent: 11 },
-        { label: 'Enhancement', color: '#ffe066', percent: 22 },
-        { label: 'Proficient', color: '#7ed957', percent: 22 },
-        { label: 'Highly Proficient', color: '#27ae60', percent: 34 },
-      ],
-    },
-    {
-      id: '2',
-      school: 'San Isidro ES',
-      section: 'CAS',
-      students: [
-        { id: '10', studentNumber: 'CAS-2025-001', nickname: 'Mark Cruz', category: 'Intervention' },
-        { id: '11', studentNumber: 'CAS-2025-002', nickname: 'Liza Sison', category: 'Consolidation' },
-        { id: '12', studentNumber: 'CAS-2025-003', nickname: 'Jomar Dela Peña', category: 'Enhancement' },
-        { id: '13', studentNumber: 'CAS-2025-004', nickname: 'Mia Santos', category: 'Proficient' },
-        { id: '14', studentNumber: 'CAS-2025-005', nickname: 'Ella Ramos', category: 'Highly Proficient' },
-        { id: '15', studentNumber: 'CAS-2025-006', nickname: 'Nico Lim', category: 'Highly Proficient' },
-        { id: '16', studentNumber: 'CAS-2025-007', nickname: 'Rhea Tan', category: 'Enhancement' },
-        { id: '17', studentNumber: 'CAS-2025-008', nickname: 'Paolo Go', category: 'Proficient' },
-        { id: '18', studentNumber: 'CAS-2025-009', nickname: 'Janelle Uy', category: 'Highly Proficient' },
-      ],
-      tasks: [
-        { title: 'Intervention', details: 'Phonics drill', status: 'done' },
-        { title: 'Consolidation', details: 'Group recitation', status: 'done' },
-        { title: 'Enhancement', details: 'Art contest', status: 'ongoing' },
-        { title: 'Proficient', details: 'Quiz bee', status: 'done' },
-        { title: 'Highly Proficient', details: 'Debate', status: 'done' },
-      ],
-      learnersPerformance: [
-        { label: 'Intervention', color: '#ff5a5a', percent: 11 },
-        { label: 'Consolidation', color: '#ffb37b', percent: 11 },
-        { label: 'Enhancement', color: '#ffe066', percent: 22 },
-        { label: 'Proficient', color: '#7ed957', percent: 22 },
-        { label: 'Highly Proficient', color: '#27ae60', percent: 34 },
-      ],
-    },
-  ];
+  // Load current teacher and their data
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          // Get teacher info from database
+          const teacherRef = ref(db, `Teachers/${user.uid}`);
+          const teacherSnapshot = await get(teacherRef);
+          
+          if (teacherSnapshot.exists()) {
+            const teacherData = teacherSnapshot.val();
+            setCurrentTeacher(teacherData);
+            setTeacherName(teacherData.name.split(' ')[0]); // Get first name
+          }
+        } catch (error) {
+          console.error('Error loading teacher data:', error);
+        }
+      }
+      setLoading(false);
+    });
 
-  const [classes, setClasses] = useState<ClassData[]>(defaultClasses);
+    return () => unsubscribe();
+  }, []);
+
+  // Load classes for current teacher
+  useEffect(() => {
+    if (!currentTeacher) return;
+
+    const classesRef = ref(db, `Classes`);
+    const unsubscribe = onValue(classesRef, (snapshot) => {
+      const data = snapshot.val();
+      console.log('Classes data loaded:', data); // Debug log
+      if (data) {
+        // Filter classes for current teacher using teacherId (MTTG25-001 format)
+        const teacherClasses = Object.values(data).filter((cls: any) => {
+          console.log('Checking class:', cls.id, 'teacherId:', cls.teacherId, 'currentTeacher:', currentTeacher.teacherId);
+          return cls.teacherId === currentTeacher.teacherId;
+        }).map((cls: any) => ({
+          ...cls,
+          students: cls.students || [],
+          school: cls.school || cls.className || 'Unknown School',
+          section: cls.section || cls.className || 'Unknown Section'
+        })) as ClassData[];
+        console.log('Filtered teacher classes:', teacherClasses);
+        setClasses(teacherClasses);
+      } else {
+        console.log('No classes data found');
+        setClasses([]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [currentTeacher]);
+
+  const [classes, setClasses] = useState<ClassData[]>([]);
 
   // Helper to get a class by id
   const getClassById = (id: string | null) => classes.find(cls => cls.id === id) || null;
+
+  // Manual refresh function
+  const refreshData = async () => {
+    setRefreshing(true);
+    try {
+      if (currentTeacher) {
+        const classesRef = ref(db, `Classes`);
+        const snapshot = await get(classesRef);
+        const data = snapshot.val();
+        console.log('Manual refresh - Classes data:', data);
+        if (data) {
+          const teacherClasses = Object.values(data).filter((cls: any) => {
+            console.log('Manual refresh - Checking class:', cls.id, 'teacherId:', cls.teacherId, 'currentTeacher:', currentTeacher.teacherId);
+            return cls.teacherId === currentTeacher.teacherId;
+          }).map((cls: any) => ({
+            ...cls,
+            students: cls.students || [],
+            school: cls.school || cls.className || 'Unknown School',
+            section: cls.section || cls.className || 'Unknown Section'
+          })) as ClassData[];
+          console.log('Manual refresh - Filtered teacher classes:', teacherClasses);
+          setClasses(teacherClasses);
+        } else {
+          setClasses([]);
+        }
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      Alert.alert('Error', 'Failed to refresh data. Please try again.');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Analytics calculations
+  const totalClasses = classes?.length || 0;
+  const totalStudents = classes?.reduce((sum, c) => sum + (c.students?.length || 0), 0) || 0;
+  const allPerformance = classes?.flatMap(c => c.learnersPerformance?.map(lp => lp.percent) || []) || [];
+  const avgPerformance = allPerformance.length ? Math.round(allPerformance.reduce((a, b) => a + b, 0) / allPerformance.length) : 0;
+  const mostImprovedGroup = (() => {
+    // For demo, just pick the group with the highest percent in the first class
+    if (!classes?.[0]?.learnersPerformance) return 'N/A';
+    return classes[0].learnersPerformance.reduce((a, b) => (a.percent > b.percent ? a : b)).label;
+  })();
 
   // Modal open/close helpers
   const openModal = (type: ModalType, extra: any = null) => {
@@ -152,6 +199,7 @@ export default function TeacherDashboard() {
     setModalType(null);
     setClassSection('');
     setClassSchool('');
+    setClassName('');
     setStudentNickname('');
     setAnnounceText('');
     setSelectedCategory(null);
@@ -165,131 +213,267 @@ export default function TeacherDashboard() {
     setEvaluationText('');
   };
 
-  // Add new class
-  const addClass = () => {
-    if (classSection.trim()) {
+  // Add new class to database
+  const addClass = async () => {
+    if (!classSection.trim() || !currentTeacher) {
+      Alert.alert('Error', 'Please enter a section name.');
+      return;
+    }
+
+    try {
+      // Generate school abbreviation for readable class ID
+      const schoolName = classSchool.trim() || 'Unknown School';
+      const schoolAbbreviation = schoolName.split(' ').map((word: string) => word.charAt(0)).join('') + 'ES';
+      const currentYear = new Date().getFullYear();
+      
+      // Generate readable class ID: SCHOOLABBR-SECTION-YEAR
+      const readableClassId = `${schoolAbbreviation.toUpperCase()}-${classSection.trim().toUpperCase()}-${currentYear}`;
+      
       const newClass: ClassData = {
-        id: Date.now().toString(),
-        school: classSchool.trim() || 'Unknown School',
+        id: readableClassId,
+        school: schoolName,
         section: classSection.trim(),
+        teacherId: currentTeacher.teacherId,
         students: [],
         tasks: [
-          { title: 'Intervention', details: 'Lorem ipsum dolor sit amet, consectetur', status: 'pending' },
-          { title: 'Consolidation', details: 'Lorem ipsum dolor sit amet, consectetur', status: 'pending' },
-          { title: 'Enhancement', details: 'Lorem ipsum dolor sit amet, consectetur', status: 'pending' },
-          { title: 'Proficient', details: 'Lorem ipsum dolor sit amet, consectetur', status: 'pending' },
-          { title: 'Highly Proficient', details: 'Lorem ipsum dolor sit amet, consectetur', status: 'pending' },
+          { title: 'Intervention', details: 'Remedial activities for struggling students', status: 'pending' },
+          { title: 'Consolidation', details: 'Group activities to reinforce learning', status: 'pending' },
+          { title: 'Enhancement', details: 'Advanced activities for proficient students', status: 'pending' },
+          { title: 'Proficient', details: 'Challenging tasks for high performers', status: 'pending' },
+          { title: 'Highly Proficient', details: 'Excellence-focused activities', status: 'pending' },
         ],
         learnersPerformance: [
-          { label: 'Intervention', color: '#ff5a5a', percent: 20 },
-          { label: 'Consolidation', color: '#ffb37b', percent: 20 },
-          { label: 'Enhancement', color: '#ffe066', percent: 20 },
-          { label: 'Proficient', color: '#7ed957', percent: 20 },
-          { label: 'Highly Proficient', color: '#27ae60', percent: 20 },
+          { label: 'Intervention', color: '#ff5a5a', percent: 0 },
+          { label: 'Consolidation', color: '#ffb37b', percent: 0 },
+          { label: 'Enhancement', color: '#ffe066', percent: 0 },
+          { label: 'Proficient', color: '#7ed957', percent: 0 },
+          { label: 'Highly Proficient', color: '#27ae60', percent: 0 },
         ],
       };
-      setClasses(prev => [...prev, newClass]);
+
+      await set(ref(db, `Classes/${readableClassId}`), newClass);
+      Alert.alert('Success', `Class created successfully!\n\nClass ID: ${readableClassId}`);
       closeModal();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to create class. Please try again.');
     }
   };
 
   // Add new student to a class
-  const addStudent = () => {
-    if (selectedClassId) {
-      setClasses(prev => prev.map(cls => {
-        if (cls.id !== selectedClassId) return cls;
-        const nextNum = cls.students.length + 1;
-        const studentNumber = `${cls.section}-2025-${String(nextNum).padStart(3, '0')}`;
-        const newStudent: Student = {
-          id: Date.now().toString(),
-          studentNumber,
-          nickname: studentNickname.trim() || studentNumber,
-          category: 'Intervention',
-        };
-        return { ...cls, students: [...cls.students, newStudent] };
-      }));
+  const addStudent = async () => {
+    if (!selectedClassId || !studentNickname.trim()) {
+      Alert.alert('Error', 'Please enter a student nickname.');
+      return;
+    }
+
+    try {
+      // Get the class information
+      const classRef = ref(db, `Classes/${selectedClassId}`);
+      const classSnapshot = await get(classRef);
+      if (!classSnapshot.exists()) {
+        Alert.alert('Error', 'Class not found.');
+        return;
+      }
+      const classData = classSnapshot.val();
+      
+      // Get current year
+      const currentYear = new Date().getFullYear();
+      
+      // Get the next student number for this class and year
+      const studentsRef = ref(db, 'Students');
+      const studentsSnapshot = await get(studentsRef);
+      let nextStudentNumber = 1;
+      
+      if (studentsSnapshot.exists()) {
+        const students = studentsSnapshot.val();
+        // Generate school abbreviation for filtering
+        const schoolAbbreviation = classData.school.split(' ').map((word: string) => word.charAt(0)).join('') + 'ES';
+        const classStudents = Object.values(students).filter((student: any) => 
+          student.classId === selectedClassId
+        );
+        nextStudentNumber = classStudents.length + 1;
+      }
+      
+      // Generate school abbreviation (first letter + ES)
+      const schoolAbbreviation = classData.school.split(' ').map((word: string) => word.charAt(0)).join('') + 'ES';
+      
+      // Generate student ID in format: SCHOOLABBR-SECTION-YEAR-XXX
+      const studentId = `${schoolAbbreviation.toUpperCase()}-${classData.section.toUpperCase()}-${currentYear}-${String(nextStudentNumber).padStart(3, '0')}`;
+      
+      // Generate short parent email and stronger password (max 8 chars for password)
+      const shortYear = currentYear.toString().slice(-2); // Last 2 digits of year
+      const shortStudentNum = String(nextStudentNumber).padStart(3, '0');
+      let parentEmail = `p${shortYear}${shortStudentNum}@gmail.com`;
+      let parentPassword = `${shortYear}${shortStudentNum}@P`; // Added @P for strength
+      
+      // Create parent account in Firebase Auth
+      let parentUserCredential;
+      try {
+        parentUserCredential = await createUserWithEmailAndPassword(auth, parentEmail, parentPassword);
+      } catch (error: any) {
+        if (error.code === 'auth/email-already-in-use') {
+          // If email already exists, try with a random suffix
+          const randomSuffix = Math.floor(Math.random() * 100).toString().padStart(2, '0');
+          parentEmail = `p${shortYear}${shortStudentNum}${randomSuffix}@gmail.com`;
+          parentPassword = `${shortYear}${shortStudentNum}${randomSuffix}@P`; // Added @P for strength
+          parentUserCredential = await createUserWithEmailAndPassword(auth, parentEmail, parentPassword);
+        } else {
+          throw error;
+        }
+      }
+      const parentUid = parentUserCredential.user.uid;
+      
+      // Add parent role to database
+      await update(ref(db, 'Roles'), { [`Parent/${parentUid}`]: true });
+      
+      // Create parent data in database
+      const parentData = {
+        accountId: parentUid,
+        email: parentEmail,
+        studentId: studentId,
+        name: `${studentNickname.trim()}'s Parent`,
+        contact: '',
+        createdAt: new Date().toISOString(),
+      };
+      await set(ref(db, `Parents/${parentUid}`), parentData);
+      
+      // Create student data
+      const newStudent: Student = {
+        id: studentId,
+        studentNumber: studentId,
+        nickname: studentNickname.trim(),
+        category: 'Intervention',
+        preScore: -1, // Default score -1 (will be updated to 0-10 when test is taken)
+        postScore: -1, // Default score -1 (will be updated to 0-10 when test is taken)
+        classId: selectedClassId,
+        parentId: parentUid, // Link to parent account
+      };
+
+      // Add student to Students node
+      await set(ref(db, `Students/${studentId}`), newStudent);
+      
+      // Update the class's students array
+      const updatedClassData = {
+        ...classData,
+        students: [...(classData.students || []), newStudent]
+      };
+      await set(ref(db, `Classes/${selectedClassId}`), updatedClassData);
+      
+      Alert.alert(
+        'Success', 
+        `Student added successfully!\n\nStudent ID: ${studentId}\nParent Email: ${parentEmail}\nParent Password: ${parentPassword}`
+      );
       closeModal();
+    } catch (error: any) {
+      let errorMessage = 'Failed to add student. Please try again.';
+      
+      if (error.code === 'auth/email-already-in-use') {
+        errorMessage = 'A parent account with this email already exists. Please try again.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Invalid email format. Please try again.';
+      } else if (error.code === 'auth/weak-password') {
+        errorMessage = 'Password is too weak. Please try again.';
+      } else if (error.code === 'auth/network-request-failed') {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      Alert.alert('Error', errorMessage);
     }
   };
 
-  // Start test function
-  const startTest = () => {
-    if (selectedStudent && testType) {
-      // Here you would navigate to the test screen
-      console.log(`Starting ${testType}-test for ${selectedStudent.nickname}`);
-      closeModal();
-    }
-  };
-
-  // Edit student function
-  const editStudent = () => {
-    if (editingStudent && editingStudentName.trim() && selectedClassId) {
-      setClasses(prev => prev.map(cls => {
-        if (cls.id !== selectedClassId) return cls;
-        return {
-          ...cls,
-          students: cls.students.map(student =>
-            student.id === editingStudent.id
-              ? { ...student, nickname: editingStudentName.trim() }
-              : student
-          )
-        };
-      }));
-      closeModal();
-    }
-  };
-
-  // Render student item for the list
-  const renderStudentItem = (classId: string) => ({ item }: { item: Student }) => {
-    const handleDeleteStudent = () => {
-      Alert.alert('Delete Student', `Are you sure you want to delete ${item.nickname}?`, [
+  // Delete class
+  const deleteClass = async (classId: string) => {
+    Alert.alert(
+      'Delete Class',
+      'Are you sure you want to delete this class? This will also delete all students in this class.',
+      [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => {
-          setClasses(prev => prev.map(cls =>
-            cls.id === classId
-              ? { ...cls, students: cls.students.filter(s => s.id !== item.id) }
-              : cls
-          ));
-        } },
-      ]);
-    };
-    return (
-      <View style={styles.studentItem}>
-        <View style={styles.studentInfo}>
-          <Text style={styles.studentNickname}>{item.nickname}</Text>
-          <Text style={styles.studentNumber}>{item.studentNumber}</Text>
-        </View>
-        <View style={styles.testButtons}>
-          <TouchableOpacity 
-            style={[styles.testButton, styles.preTestButton]} 
-            onPress={() => openModal('startTest', { student: item, testType: 'pre', classId })}
-          >
-            <Text style={styles.testButtonText}>Pre-test</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.testButton, styles.postTestButton]} 
-            onPress={() => openModal('startTest', { student: item, testType: 'post', classId })}
-          >
-            <Text style={styles.testButtonText}>Post-test</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={{ marginLeft: 8, backgroundColor: '#ff5a5a', borderRadius: 8, padding: 6 }} onPress={handleDeleteStudent}>
-            <MaterialIcons name="delete" size={18} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      </View>
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Delete class
+              await remove(ref(db, `Classes/${classId}`));
+              
+              // Delete all students in this class
+              const studentsRef = ref(db, 'Students');
+              const studentsSnapshot = await get(studentsRef);
+              if (studentsSnapshot.exists()) {
+                const students = studentsSnapshot.val();
+                const deletePromises = Object.keys(students)
+                  .filter(studentId => students[studentId].classId === classId)
+                  .map(studentId => remove(ref(db, `Students/${studentId}`)));
+                
+                await Promise.all(deletePromises);
+              }
+              
+              Alert.alert('Success', 'Class deleted successfully!');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to delete class.');
+            }
+          }
+        }
+      ]
     );
   };
 
-  // Analytics calculations
-  const totalClasses = classes.length;
-  const totalStudents = classes.reduce((sum, c) => sum + c.students.length, 0);
-  const allPerformance = classes.flatMap(c => c.learnersPerformance.map(lp => lp.percent));
-  const avgPerformance = allPerformance.length ? Math.round(allPerformance.reduce((a, b) => a + b, 0) / allPerformance.length) : 0;
-  const mostImprovedGroup = (() => {
-    // For demo, just pick the group with the highest percent in the first class
-    if (!classes[0]) return 'N/A';
-    return classes[0].learnersPerformance.reduce((a, b) => (a.percent > b.percent ? a : b)).label;
-  })();
+  // Delete student
+  const deleteStudent = async (studentId: string) => {
+    Alert.alert(
+      'Delete Student',
+      'Are you sure you want to delete this student?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Remove student from Students node
+              await remove(ref(db, `Students/${studentId}`));
+              
+              // Find and remove student from all classes
+              const classesRef = ref(db, 'Classes');
+              const classesSnapshot = await get(classesRef);
+              if (classesSnapshot.exists()) {
+                const classes = classesSnapshot.val();
+                const updatePromises = Object.keys(classes).map(async (classId) => {
+                  const classData = classes[classId];
+                  if (classData.students && classData.students.some((s: any) => s.id === studentId)) {
+                    const updatedStudents = classData.students.filter((s: any) => s.id !== studentId);
+                    await set(ref(db, `Classes/${classId}`), {
+                      ...classData,
+                      students: updatedStudents
+                    });
+                  }
+                });
+                await Promise.all(updatePromises);
+              }
+              
+              Alert.alert('Success', 'Student deleted successfully!');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to delete student.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const startTest = () => {
+    // TODO: Implement test functionality
+    Alert.alert('Test Started', 'Test functionality will be implemented soon.');
+      closeModal();
+  };
+
+  const editStudent = () => {
+    // TODO: Implement edit student functionality
+    Alert.alert('Edit Student', 'Edit functionality will be implemented soon.');
+      closeModal();
+  };
 
   // Modern, 3D/gradient, adaptive analytics cards
   function AnalyticsCards() {
@@ -438,80 +622,47 @@ export default function TeacherDashboard() {
     );
   }
 
-  // Refactor Tasks Progress to a 2-column grid of modern cards
-  const categoryRanges = {
-    'Intervention': 'Total Score < 25%',
-    'Consolidation': '25-49%',
-    'Enhancement': '50-74%',
-    'Proficient': '75-84%',
-    'Highly Proficient': '85-100%',
+  const renderStudentItem = (classId: string) => ({ item }: { item: Student }) => {
+    const handleDeleteStudent = () => {
+      deleteStudent(item.id);
+    };
+
+    return (
+      <View style={styles.studentItem}>
+        <View style={styles.studentInfo}>
+          <Text style={styles.studentNickname}>{item.nickname}</Text>
+          <Text style={styles.studentNumber}>ID: {item.studentNumber}</Text>
+        </View>
+        <View style={styles.testButtons}>
+          <TouchableOpacity 
+            style={[styles.testButton, styles.preTestButton]} 
+            onPress={() => openModal('startTest', { student: item, testType: 'pre', classId })}
+          >
+            <Text style={styles.testButtonText}>Pre: {item.preScore || 0}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.testButton, styles.postTestButton]} 
+            onPress={() => openModal('startTest', { student: item, testType: 'post', classId })}
+          >
+            <Text style={styles.testButtonText}>Post: {item.postScore || 0}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   };
 
-  function TasksProgressGrid({ categories, tasks }: { categories: { label: string; color: string }[], tasks: { title: string; details: string; status: string }[] }) {
-    // Count status for progress bar
-    const total = tasks.length;
-    const done = tasks.filter(t => t.status === 'done').length;
-    const ongoing = tasks.filter(t => t.status === 'ongoing').length;
-    const notDone = total - done - ongoing;
+  if (loading) {
     return (
-      <View style={{ width: '100%' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-          <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#222', marginRight: 8 }}>Tasks Progress</Text>
-          <MaterialIcons name="info" size={18} color="#27ae60" style={{ marginLeft: 4 }} />
-          <View style={{ flex: 1, height: 8, backgroundColor: '#e6e6e6', borderRadius: 4, marginHorizontal: 10, flexDirection: 'row', overflow: 'hidden' }}>
-            <View style={{ height: 8, backgroundColor: '#7ed957', width: `${(done / total) * 100}%` }} />
-            <View style={{ height: 8, backgroundColor: '#ffe066', width: `${(ongoing / total) * 100}%` }} />
-            <View style={{ height: 8, backgroundColor: '#ff5a5a', width: `${(notDone / total) * 100}%` }} />
-          </View>
-          <Text style={{ fontSize: 15, color: '#222', fontWeight: 'bold', minWidth: 60, textAlign: 'right' }}>Progress <Text style={{ fontWeight: 'bold' }}>{Math.round((done / total) * 100)}%</Text></Text>
-        </View>
-        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 8, gap: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 12, height: 12, backgroundColor: '#7ed957', borderRadius: 6, marginRight: 4 }} />
-            <Text style={{ fontSize: 13, color: '#222' }}>Done</Text>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 12, height: 12, backgroundColor: '#ffe066', borderRadius: 6, marginRight: 4 }} />
-            <Text style={{ fontSize: 13, color: '#222' }}>Ongoing</Text>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={{ width: 12, height: 12, backgroundColor: '#ff5a5a', borderRadius: 6, marginRight: 4 }} />
-            <Text style={{ fontSize: 13, color: '#222' }}>Not Yet Done</Text>
-          </View>
-        </View>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10 }}>
-          {categories.map((cat, idx) => (
-            <View
-              key={cat.label}
-              style={{
-                backgroundColor: '#fff',
-                borderRadius: 16,
-                paddingVertical: 18,
-                paddingHorizontal: 18,
-                marginBottom: 12,
-                width: '48%',
-                minWidth: 150,
-                maxWidth: '48%',
-                shadowColor: '#27ae60',
-                shadowOpacity: 0.08,
-                shadowRadius: 8,
-                shadowOffset: { width: 0, height: 2 },
-                elevation: 2,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 16, marginBottom: 2 }}>For {cat.label}</Text>
-                <Text style={{ color: '#888', fontSize: 14 }}>{categoryRanges[cat.label as keyof typeof categoryRanges]}</Text>
-              </View>
-              <TouchableOpacity style={{ backgroundColor: '#e6ffe6', borderRadius: 18, padding: 8, marginLeft: 8 }}>
-                <MaterialIcons name="arrow-forward-ios" size={22} color="#27ae60" />
-              </TouchableOpacity>
-            </View>
-          ))}
-        </View>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
+        <Text style={{ fontSize: 18, color: '#27ae60' }}>Loading...</Text>
+      </View>
+    );
+  }
+
+  if (!currentTeacher) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
+        <Text style={{ fontSize: 18, color: '#ff5a5a' }}>Teacher not found. Please log in again.</Text>
       </View>
     );
   }
@@ -536,7 +687,7 @@ export default function TeacherDashboard() {
   const renderClassPanel = (cls: ClassData) => {
     // Group students by category
     const studentsByCategory: Record<string, Student[]> = {};
-    cls.students.forEach(student => {
+    (cls.students || []).forEach(student => {
       if (!studentsByCategory[student.category]) studentsByCategory[student.category] = [];
       studentsByCategory[student.category].push(student);
     });
@@ -545,48 +696,27 @@ export default function TeacherDashboard() {
       Alert.alert('Delete Class', `Are you sure you want to delete class ${cls.section}?`, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: () => {
-          setClasses(prev => prev.filter(c => c.id !== cls.id));
+          deleteClass(cls.id);
         } },
       ]);
     };
     const windowWidth = Dimensions.get('window').width;
     const isSmall = windowWidth < 400;
     // Compute class average improvement and post-test average for this class
-    const demoStudentScores: Record<string, { pre?: number; post?: number }> = {
-      '1': { pre: 2, post: 8 },    // +300% (big improvement)
-      '2': { pre: 3, post: 2 },    // -33% (decline)
-      '3': { pre: 6, post: 7 },    // +17%
-      '4': { pre: 5, post: 5 },    // 0%
-      '5': { pre: 7, post: 10 },   // +43%
-      '6': { pre: 4, post: 2 },    // -50%
-      '7': { pre: 0 },             // Only pre
-      '8': { pre: 5, post: 6 },    // +20%
-      '9': { pre: 8, post: 8 },    // 0%
-      '10': { pre: 6, post: 3 },   // -50%
-      '11': { pre: 4, post: 7 },   // +75%
-      '12': { pre: 2, post: 1 },   // -50%
-      '13': { pre: 5, post: 9 },   // +80%
-      '14': { pre: 7, post: 7 },   // 0%
-      '15': { pre: 8, post: 10 },  // +25%
-      '16': { pre: 3, post: 2 },   // -33%
-      '17': { pre: 6, post: 6 },   // 0%
-      '18': { pre: 7, post: 8 },   // +14%
-    };
-    const studentsWithBoth = cls.students.filter(s => {
-      const scores = demoStudentScores[s.id] || {};
-      return typeof scores.pre === 'number' && typeof scores.post === 'number';
+    const studentsWithBoth = (cls.students || []).filter(s => {
+      return typeof s.preScore === 'number' && s.preScore !== -1 && 
+             typeof s.postScore === 'number' && s.postScore !== -1;
     });
     let avgImprovement = 0;
     let avgPost = 0;
     if (studentsWithBoth.length > 0) {
       const improvements = studentsWithBoth.map(s => {
-        const scores = demoStudentScores[s.id];
-        const pre = scores?.pre ?? 0;
-        const post = scores?.post ?? 0;
+        const pre = s.preScore ?? 0;
+        const post = s.postScore ?? 0;
         return pre === 0 ? 100 : ((post - pre) / pre) * 100;
       });
       avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
-      avgPost = Math.round(studentsWithBoth.map(s => demoStudentScores[s.id]?.post ?? 0).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
+      avgPost = Math.round(studentsWithBoth.map(s => s.postScore ?? 0).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
     }
     let avgImprovementColor = '#ffe066';
     if (avgImprovement > 0) avgImprovementColor = '#27ae60';
@@ -595,13 +725,13 @@ export default function TeacherDashboard() {
       <LinearGradient colors={['#f7fafc', '#e0f7fa']} style={[styles.classCard, { marginBottom: 15, padding: 2, borderRadius: 32, shadowColor: '#27ae60', shadowOpacity: 0.13, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 10, width: '100%', maxWidth: 540, alignSelf: 'center' }]}> 
         <View style={{ padding: isSmall ? 16 : 24, paddingBottom: isSmall ? 0 : 8 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: isSmall ? 9 : 8 }}>
-            <View>
+                <View>
               <Text style={{ fontSize: 12, color: '#888', fontWeight: '700', marginBottom: -3 }}>{cls.school}</Text>
               <Text style={{ fontSize: 35, color: '#27ae60', fontWeight: 'bold', letterSpacing: 1 }}>{cls.section}</Text>
-            </View>
+          </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginBottom: isSmall ? 10 : 18, gap: 6, flexWrap: 'wrap', alignSelf: 'flex-end' }}>
               <TouchableOpacity onPress={() => openModal('classList', { classId: cls.id })} activeOpacity={0.8} style={{ borderRadius: 20, overflow: 'hidden', maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
-                <StudentCountCard count={cls.students.length} iconSize={22} fontSize={16} />
+                <StudentCountCard count={cls.students?.length || 0} iconSize={22} fontSize={16} />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => openModal('addStudent', { classId: cls.id })} style={{ backgroundColor: '#e0f7fa', borderRadius: 20, padding: 6, alignItems: 'center', justifyContent: 'center', elevation: 2, shadowColor: '#0097a7', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
                 <MaterialIcons name="person-add" size={22} color="#0097a7" />
@@ -613,7 +743,7 @@ export default function TeacherDashboard() {
                 <MaterialIcons name="delete" size={22} color="#ff5a5a" />
               </TouchableOpacity>
             </View>
-          </View>
+        </View>
           <View style={{ marginTop: isSmall ? 8 : 16 }}>
             <AnalyticsPieChartWithLegend data={cls.learnersPerformance} title="Pretest Performance" />
             <View style={{ height: 10 }} />
@@ -629,7 +759,7 @@ export default function TeacherDashboard() {
                     style={{ marginLeft: 2 }}>
                     <MaterialIcons name="info-outline" size={13} color="#888" />
                   </Pressable>
-                </View>
+            </View>
                 <Text style={[styles.compactCardValue, { color: avgImprovementColor }]}>{avgImprovement > 0 ? '+' : ''}{avgImprovement}%</Text>
               </View>
               {/* Divider */}
@@ -681,7 +811,9 @@ export default function TeacherDashboard() {
         );
       case 'addStudent':
         if (!cls) return null;
-        const nextStudentNumber = `${cls.section}-2025-${String(cls.students.length + 1).padStart(3, '0')}`;
+        // Generate school abbreviation for display
+        const schoolAbbreviation = cls.school.split(' ').map((word: string) => word.charAt(0)).join('') + 'ES';
+        const nextStudentNumber = `${schoolAbbreviation.toUpperCase()}-${cls.section.toUpperCase()}-2025-${String((cls.students?.length || 0) + 1).padStart(3, '0')}`;
         return (
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>Add Student</Text>
@@ -730,7 +862,7 @@ export default function TeacherDashboard() {
         };
         // Helper to get status from score
         function getStatusFromScore(score: number, total: number) {
-          if (typeof score !== 'number' || typeof total !== 'number' || total === 0) return 'Not yet taken';
+          if (typeof score !== 'number' || typeof total !== 'number' || total === 0 || score === -1) return 'Not yet taken';
           const percent = (score / total) * 100;
           if (percent < 25) return 'Intervention';
           if (percent < 50) return 'For Consolidation';
@@ -739,42 +871,27 @@ export default function TeacherDashboard() {
           return 'Highly Proficient';
         }
         // Realistic demo: some students have only pre, some both, none post without pre
-        const demoStudentScores: Record<string, { pre?: number; post?: number }> = {
-          // id: { pre, post }
-          '1': { pre: 2, post: 8 }, // +300% (green)
-          '2': { pre: 3, post: 4 }, // +33% (green)
-          '3': { pre: 6, post: 7 }, // +17% (green)
-          '4': { pre: 5, post: 5 }, // 0% (yellow)
-          '5': { pre: 7, post: 6 }, // -14% (red)
-          '6': { pre: 4, post: 5 }, // +25% (green)
-          '7': { pre: 0 }, // Only pre, Intervention
-          '8': { pre: 5, post: 6 }, // +20% (green)
-          '9': { pre: 8, post: 8 }, // 0% (yellow)
-          '10': { pre: 6, post: 3 }, // -50% (red)
-          '11': { pre: 4, post: 4 }, // 0% (yellow)
-          '12': { pre: 2, post: 1 }, // -50% (red)
-        };
         const getStudentTestStatus = (student: Student, type: 'pre' | 'post') => {
-          const scores = demoStudentScores[student.id] || {};
           if (type === 'pre') {
-            if (typeof scores.pre === 'number') {
+            if (typeof student.preScore === 'number' && student.preScore !== -1) {
               return {
                 taken: true,
-                score: scores.pre,
+                score: student.preScore,
                 total: 10,
-                category: getStatusFromScore(scores.pre, 10),
+                category: getStatusFromScore(student.preScore, 10),
               };
             } else {
               return { taken: false, category: 'Not yet taken' };
             }
           } else {
-            // Only allow post if pre exists
-            if (typeof scores.pre === 'number' && typeof scores.post === 'number') {
+            // Only allow post if pre exists and is not -1
+            if (typeof student.preScore === 'number' && student.preScore !== -1 && 
+                typeof student.postScore === 'number' && student.postScore !== -1) {
               return {
                 taken: true,
-                score: scores.post,
+                score: student.postScore,
                 total: 10,
-                category: getStatusFromScore(scores.post, 10),
+                category: getStatusFromScore(student.postScore, 10),
               };
             } else {
               return { taken: false, category: 'Not yet taken' };
@@ -786,7 +903,7 @@ export default function TeacherDashboard() {
           if (!postStatus.taken || !postStatus.category || !(postStatus.category in statusOrder)) return 'Not yet taken';
           return postStatus.category;
         }
-        let sortedStudents = [...cls.students];
+        let sortedStudents = [...(cls.students || [])];
         if (sortColumn === 'name') {
           sortedStudents.sort((a, b) => sortAsc ? a.nickname.localeCompare(b.nickname) : b.nickname.localeCompare(a.nickname));
         } else if (sortColumn === 'status') {
@@ -822,21 +939,20 @@ export default function TeacherDashboard() {
           }
         };
         // Compute class average improvement and post-test average
-        const studentsWithBoth = cls.students.filter(s => {
-          const scores = demoStudentScores[s.id] || {};
-          return typeof scores.pre === 'number' && typeof scores.post === 'number';
+        const studentsWithBoth = (cls.students || []).filter(s => {
+          return typeof s.preScore === 'number' && s.preScore !== -1 && 
+                 typeof s.postScore === 'number' && s.postScore !== -1;
         });
         let avgImprovement = 0;
         let avgPost = 0;
         if (studentsWithBoth.length > 0) {
           const improvements = studentsWithBoth.map(s => {
-            const scores = demoStudentScores[s.id];
-            const pre = scores?.pre ?? 0;
-            const post = scores?.post ?? 0;
+            const pre = s.preScore ?? 0;
+            const post = s.postScore ?? 0;
             return pre === 0 ? 100 : ((post - pre) / pre) * 100;
           });
           avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
-          avgPost = Math.round(studentsWithBoth.map(s => demoStudentScores[s.id]?.post ?? 0).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
+          avgPost = Math.round(studentsWithBoth.map(s => s.postScore ?? 0).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
         }
         let avgImprovementColor = '#ffe066';
         if (avgImprovement > 0) avgImprovementColor = '#27ae60';
@@ -984,11 +1100,7 @@ export default function TeacherDashboard() {
                         Alert.alert('Delete Student', `Are you sure you want to delete ${item.nickname}?`, [
                           { text: 'Cancel', style: 'cancel' },
                           { text: 'Delete', style: 'destructive', onPress: () => {
-                            setClasses(prev => prev.map(cls2 =>
-                              cls2.id === cls.id
-                                ? { ...cls2, students: cls2.students.filter(s => s.id !== item.id) }
-                                : cls2
-                            ));
+                            deleteStudent(item.id);
                           } },
                         ]);
                       }}>
@@ -1002,41 +1114,13 @@ export default function TeacherDashboard() {
             <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
           </View>
         );
-      case 'category':
-        if (!cls || !selectedCategory) return null;
-        const studentsInCategory = cls.students.filter(s => s.category === selectedCategory);
-        return (
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>{selectedCategory} Students</Text>
-            <FlatList
-              data={studentsInCategory}
-              keyExtractor={item => item.id}
-              renderItem={renderStudentItem(cls.id)}
-              style={{ marginVertical: 10, maxHeight: 300 }}
-            />
-            <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
-          </View>
-        );
-      case 'taskInfo':
-        // Placeholder stats
-        const taskStats = { done: 8, ongoing: 5, notdone: 12, total: 25 };
-        return (
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Task Progress Details</Text>
-            <Text style={styles.modalStat}>Done: <Text style={styles.modalStatNum}>{taskStats.done}</Text></Text>
-            <Text style={styles.modalStat}>Ongoing: <Text style={styles.modalStatNum}>{taskStats.ongoing}</Text></Text>
-            <Text style={styles.modalStat}>Not Done: <Text style={styles.modalStatNum}>{taskStats.notdone}</Text></Text>
-            <Text style={styles.modalStat}>Total: <Text style={styles.modalStatNum}>{taskStats.total}</Text></Text>
-            <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
-          </View>
-        );
       case 'startTest':
         return (
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>Start {testType === 'pre' ? 'Pre-test' : 'Post-test'}</Text>
             <Text style={styles.modalStat}>
               Student: <Text style={styles.modalStatNum}>{selectedStudent?.nickname}</Text>
-            </Text>
+                      </Text>
             <Text style={styles.modalStat}>
               Number: <Text style={styles.modalStatNum}>{selectedStudent?.studentNumber}</Text>
             </Text>
@@ -1075,7 +1159,7 @@ export default function TeacherDashboard() {
             <View style={styles.modalBtnRow}>
               <Pressable style={styles.modalBtn} onPress={closeModal}><Text style={styles.modalBtnText}>Cancel</Text></Pressable>
               <Pressable style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={handleSendAnnouncement}><Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Send</Text></Pressable>
-            </View>
+          </View>
           </View>
         );
       case 'editStudent':
@@ -1128,7 +1212,7 @@ export default function TeacherDashboard() {
               multiline
               numberOfLines={4}
             />
-            <View style={styles.modalBtnRow}>
+                  <View style={styles.modalBtnRow}>
               <Pressable style={styles.modalBtn} onPress={closeModal}><Text style={styles.modalBtnText}>Cancel</Text></Pressable>
               <Pressable style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={() => {
                 Alert.alert('Send Evaluation', 'Are you sure you want to send this evaluation to the parent?', [
@@ -1156,21 +1240,48 @@ export default function TeacherDashboard() {
                 <View style={styles.headerRow}>
                   <View>
                     <Text style={styles.welcome}>Welcome,</Text>
-                    <Text style={styles.teacherName}>{teacherName}</Text>
+                    <Text style={styles.teacherName}>Teacher {teacherName}</Text>
                   </View>
-                  <TouchableOpacity style={styles.profileBtn}>
-                    <FontAwesome name="user-circle" size={38} color="#27ae60" />
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TouchableOpacity 
+                      style={[styles.profileBtn, { backgroundColor: refreshing ? '#e0f7fa' : 'rgba(255,255,255,0.7)' }]} 
+                      onPress={refreshData}
+                      disabled={refreshing}
+                    >
+                      <MaterialIcons 
+                        name="refresh" 
+                        size={24} 
+                        color={refreshing ? '#0097a7' : '#27ae60'} 
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.profileBtn}>
+                      <MaterialCommunityIcons name="account-circle" size={38} color="#27ae60" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
               <View style={dashboardCardStyle}>
+                {/* Debug info */}
+                {__DEV__ && (
+                  <View style={{ backgroundColor: '#f0f0f0', padding: 8, borderRadius: 8, marginBottom: 10 }}>
+                    <Text style={{ fontSize: 12, color: '#666' }}>
+                      Debug: Teacher ID: {currentTeacher?.teacherId || 'None'}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#666' }}>
+                      Classes loaded: {classes.length}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#666' }}>
+                      Total students: {totalStudents}
+                    </Text>
+                  </View>
+                )}
                 {/* Title and Add Class in a single row */}
                 <View style={styles.dashboardHeaderRow}>
                   <Text style={styles.dashboardTitle}>Classrooms</Text>
                   <TouchableOpacity style={styles.addClassBtn} onPress={() => openModal('addClass')}>
                     <Text style={styles.addClassBtnText}>Add Class</Text>
                   </TouchableOpacity>
-                </View>
+              </View>
                 <View style={{ height: 8 }} />
                 <AnalyticsCards />
                 {classes.map(cls => (
@@ -1260,7 +1371,7 @@ const styles = StyleSheet.create({
   },
   headerWrap: {
     width: '100%',
-    paddingTop: 28,
+    paddingTop: 16,
     paddingBottom: 16,
     backgroundColor: 'rgba(255,255,255,0.96)',
     borderBottomLeftRadius: 28,
@@ -1749,5 +1860,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#e0f7e2',
     marginHorizontal: 12,
     borderRadius: 1,
+  },
+  modalLabel: {
+    fontSize: 15,
+    color: '#27ae60',
+    fontWeight: '600',
+    marginBottom: 4,
+    marginLeft: 2,
   },
 }); 

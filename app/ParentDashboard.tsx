@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, Dimensions, Alert, ImageBackground, Modal, Pressable } from 'react-native';
-import { MaterialIcons, FontAwesome, Feather } from '@expo/vector-icons';
+import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import React, { useState } from 'react';
+import { Alert, Dimensions, Image, ImageBackground, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 const bgImage = require('../assets/images/bg.jpg');
 
 const { width } = Dimensions.get('window');

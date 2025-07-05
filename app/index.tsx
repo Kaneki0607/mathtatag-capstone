@@ -1,7 +1,7 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ImageBackground, Animated, Dimensions } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useFonts } from 'expo-font';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useRef } from 'react';
+import { Animated, Dimensions, ImageBackground, StyleSheet, Text, View } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
 
@@ -22,7 +22,7 @@ export default function Index() {
       tension: 80,
       useNativeDriver: true,
     }).start();
-    // MATH color pulse
+    // rcolor pulse
     Animated.loop(
       Animated.sequence([
         Animated.timing(mathColorAnim, {
