@@ -11,17 +11,16 @@ import { auth, db } from '../constants/firebaseConfig';
 
 // Add types at the top:
 type Teacher = {
-  id?: string; // legacy, not used for new teachers
   accountId: string;
   teacherId: string;
   name: string;
   email: string;
   school: string;
-  numClasses: number;
-  numStudents: number;
-  avgImprovement: number;
-  contact?: string;
-  password?: string;
+  contact: string;
+  password?: string; // Only for registration, not stored in DB
+  numClasses?: number;
+  numStudents?: number;
+  avgImprovement?: number;
 };
 
 type ChartData = { label: string; value: number; color: string };
@@ -30,7 +29,7 @@ const bgImage = require('../assets/images/bg.jpg');
 
 export default function AdminDashboard() {
   const [modalVisible, setModalVisible] = useState(false);
-  const [newTeacher, setNewTeacher] = useState<Teacher>({ name: '', email: '', contact: '', school: '', password: '', id: '', accountId: '', teacherId: '', numClasses: 0, numStudents: 0, avgImprovement: 0 });
+  const [newTeacher, setNewTeacher] = useState<Teacher>({ name: '', email: '', contact: '', school: '', password: '', accountId: '', teacherId: '' });
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [teacherIdCounter, setTeacherIdCounter] = useState(0);
   const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
@@ -39,11 +38,6 @@ export default function AdminDashboard() {
 
   const windowWidth = Dimensions.get('window').width;
   const numColumns = windowWidth < 400 ? 1 : windowWidth < 600 ? 2 : 3;
-
-  // Get top 3 teachers by improvement
-  const top3Teachers = [...teachers]
-    .sort((a, b) => b.avgImprovement - a.avgImprovement)
-    .slice(0, 3);
 
   // Pie chart for effectiveness
   function EffectivenessPieChart({ data }: { data: ChartData[] }) {
@@ -108,7 +102,7 @@ export default function AdminDashboard() {
 
   // Register teacher handler (mock)
   async function handleRegisterTeacher() {
-    if (!newTeacher.name || !newTeacher.email || !newTeacher.contact || !newTeacher.school || !newTeacher.password) {
+    if (!newTeacher.name || !newTeacher.email || !newTeacher.contact || !newTeacher.school) {
       Alert.alert('All fields are required');
       return;
     }
@@ -127,9 +121,9 @@ export default function AdminDashboard() {
         email: newTeacher.email,
         contact: newTeacher.contact,
         school: newTeacher.school,
-        numClasses: 0,
-        numStudents: 0,
-        avgImprovement: 0,
+        numClasses: newTeacher.numClasses ?? 0,
+        numStudents: newTeacher.numStudents ?? 0,
+        avgImprovement: newTeacher.avgImprovement ?? 0,
       };
       await set(ref(db, `Teachers/${teacherUid}`), teacherData);
       // 4. Add UID to Roles/Teacher
@@ -137,7 +131,7 @@ export default function AdminDashboard() {
       // 5. Update local state
       setTeachers(prev => [...prev, teacherData]);
       Alert.alert('Success', `${newTeacher.name} has been registered as a teacher.`);
-      setNewTeacher({ name: '', email: '', contact: '', school: '', password: '', id: '', accountId: '', teacherId: '', numClasses: 0, numStudents: 0, avgImprovement: 0 });
+      setNewTeacher({ name: '', email: '', contact: '', school: '', password: '', accountId: '', teacherId: '' });
     } catch (error: any) {
       Alert.alert('Registration Failed', error.message || 'Could not register teacher.');
     }
@@ -224,13 +218,12 @@ export default function AdminDashboard() {
   // Remove all references to mockStats and use derived values from teachers
   const stats = {
     totalTeachers: teachers.length,
-    totalClasses: teachers.reduce((sum, t) => sum + (t.numClasses || 0), 0),
-    totalStudents: teachers.reduce((sum, t) => sum + (t.numStudents || 0), 0),
-    avgImprovement: teachers.length ? Math.round(teachers.reduce((sum, t) => sum + (t.avgImprovement || 0), 0) / teachers.length) : 0,
+    totalClasses: teachers.reduce((sum, t) => sum + (t.numClasses ?? 0), 0),
+    totalStudents: teachers.reduce((sum, t) => sum + (t.numStudents ?? 0), 0),
     avgPreTest: 5.2, // placeholder, update if you have real data
     avgPostTest: 7.1, // placeholder, update if you have real data
     passRate: 82, // placeholder, update if you have real data
-    mostImprovedTeacher: teachers.reduce((a, b) => (a.avgImprovement > b.avgImprovement ? a : b), teachers[0] || {}),
+    mostImprovedTeacher: teachers.reduce((a, b) => ((a.avgImprovement ?? 0) > (b.avgImprovement ?? 0) ? a : b), teachers[0] || {}),
     activeTeachers: teachers.length - 1, // placeholder
     inactiveTeachers: 1, // placeholder
   };
@@ -302,34 +295,6 @@ export default function AdminDashboard() {
                   <Text style={styles.moreStatsValue}>{stats.inactiveTeachers}</Text>
                 </View>
               </View>
-              {/* Top 3 Teachers */}
-              {top3Teachers.length > 0 && (
-                <View style={styles.top3Card}>
-                  <Text style={styles.top3Title}>Top 3 Teachers</Text>
-                  <View style={styles.top3List}>
-                    {top3Teachers.map((teacher, index) => (
-                      <View key={(teacher.accountId || teacher.teacherId || index)} style={[styles.top3Item, index === 0 && styles.top3First]}>
-                        <View style={styles.top3Rank}>
-                          <Text style={[styles.top3RankText, index === 0 && styles.top3RankTextFirst]}>
-                            #{index + 1}
-                          </Text>
-                        </View>
-                        <View style={styles.top3Info}>
-                          <Text style={[styles.top3Name, index === 0 && styles.top3NameFirst]}>
-                            {teacher.name}
-                          </Text>
-                          <Text style={[styles.top3School, index === 0 && styles.top3SchoolFirst]}>
-                            {teacher.school}
-                          </Text>
-                          <Text style={[styles.top3Improvement, index === 0 && styles.top3ImprovementFirst]}>
-                            +{teacher.avgImprovement}% improvement
-                          </Text>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              )}
               <EffectivenessBarChart data={improvementDistribution} />
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop:2, marginBottom: 12 }}>
                 <Text style={styles.sectionTitle}>All Teachers</Text>
@@ -340,7 +305,7 @@ export default function AdminDashboard() {
             </View>
           }
           data={teachers}
-          keyExtractor={(item, index) => item.accountId || item.teacherId || item.id || String(index)}
+          keyExtractor={(item, index) => item.accountId || item.teacherId || String(index)}
           numColumns={2}
           columnWrapperStyle={{ justifyContent: 'flex-start' }}
           contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: 40 }}
@@ -353,10 +318,10 @@ export default function AdminDashboard() {
               <View style={{ flex: 1, marginLeft: 0, minWidth: 0 }}>
                 <Text style={styles.teacherGridName} numberOfLines={1}>{item.name}</Text>
                 <Text style={styles.teacherGridSchool} numberOfLines={1}>{item.school}</Text>
-                <Text style={styles.teacherGridId}>ID: {item.id}</Text>
+                <Text style={styles.teacherGridId}>ID: {item.teacherId}</Text>
                 <View style={styles.teacherGridStatsRow}>
-                  <View style={styles.teacherGridStat}><MaterialCommunityIcons name="account-group" size={18} color="#27ae60" /><Text style={styles.teacherGridStatNum}> {item.numStudents.toString().padStart(2,'0')}</Text></View>
-                  <View style={styles.teacherGridStat}><MaterialCommunityIcons name="google-classroom" size={18} color="#3a3a3a" /><Text style={styles.teacherGridStatNum}> {item.numClasses.toString().padStart(2,'0')}</Text></View>
+                  <View style={styles.teacherGridStat}><MaterialCommunityIcons name="account-group" size={18} color="#27ae60" /><Text style={styles.teacherGridStatNum}> {(item.numStudents ?? 0).toString().padStart(2,'0')}</Text></View>
+                  <View style={styles.teacherGridStat}><MaterialCommunityIcons name="google-classroom" size={18} color="#3a3a3a" /><Text style={styles.teacherGridStatNum}> {(item.numClasses ?? 0).toString().padStart(2,'0')}</Text></View>
                   <View style={styles.teacherGridImprovementRow}>
                     <MaterialIcons
                       name={item.avgImprovement > 0 ? 'trending-up' : item.avgImprovement < 0 ? 'trending-down' : 'trending-flat'}
@@ -369,7 +334,7 @@ export default function AdminDashboard() {
                         { color: item.avgImprovement > 0 ? '#27ae60' : item.avgImprovement < 0 ? '#ff5a5a' : '#ffe066', marginLeft: -3 },
                       ]}
                     >
-                      {item.avgImprovement > 0 ? '+' : ''}{item.avgImprovement}%
+                      {(item.avgImprovement ?? 0) > 0 ? '+' : ''}{item.avgImprovement ?? 0}%
                     </Text>
                   </View>
                 </View>
@@ -398,7 +363,7 @@ export default function AdminDashboard() {
                 <Text style={styles.modalLabel}>School</Text>
                 <TextInput style={styles.modalInput} placeholder="Enter school" value={newTeacher.school} onChangeText={v => setNewTeacher(t => ({ ...t, school: v }))} />
               </View>
-              <View style={{ marginBottom: 18 }}>
+              <View style={{ marginBottom: 10 }}>
                 <Text style={styles.modalLabel}>Password</Text>
                 <TextInput style={styles.modalInput} placeholder="Enter password" value={newTeacher.password} onChangeText={v => setNewTeacher(t => ({ ...t, password: v }))} secureTextEntry />
               </View>
@@ -451,9 +416,9 @@ export default function AdminDashboard() {
                     <View style={{ borderBottomWidth: 1, borderColor: '#e6e6e6', marginBottom: 12 }} />
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
                       {[
-                        { label: 'Classes', value: editTeacher.numClasses, color: '#27ae60' },
-                        { label: 'Students', value: editTeacher.numStudents, color: '#27ae60' },
-                        { label: 'Avg. Improvement', value: (editTeacher.avgImprovement > 0 ? '+' : '') + editTeacher.avgImprovement + '%', color: editTeacher.avgImprovement > 0 ? '#27ae60' : editTeacher.avgImprovement < 0 ? '#ff5a5a' : '#ffe066' }
+                        { label: 'Classes', value: editTeacher.numClasses ?? 0, color: '#27ae60' },
+                        { label: 'Students', value: editTeacher.numStudents ?? 0, color: '#27ae60' },
+                        { label: 'Avg. Improvement', value: (editTeacher.avgImprovement ?? 0) > 0 ? '+' : '' + (editTeacher.avgImprovement ?? 0) + '%', color: (editTeacher.avgImprovement ?? 0) > 0 ? '#27ae60' : (editTeacher.avgImprovement ?? 0) < 0 ? '#ff5a5a' : '#ffe066' }
                       ].map((stat, idx) => (
                         <View key={stat.label + '-' + idx} style={{ alignItems: 'center', flex: 1 }}>
                           <Text style={{ color: '#888', fontSize: 13, fontWeight: '600' }}>{stat.label}</Text>

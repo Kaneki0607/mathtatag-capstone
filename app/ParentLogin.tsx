@@ -1,23 +1,68 @@
 import { AntDesign, MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFonts } from 'expo-font';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import { get, ref } from 'firebase/database';
+import React, { useEffect, useState } from 'react';
 import { Dimensions, ImageBackground, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { db } from '../constants/firebaseConfig';
 
 const { width, height } = Dimensions.get('window');
 
 export default function ParentLogin() {
   const router = useRouter();
-  const [lrn, setLrn] = useState('');
-  const [password, setPassword] = useState('');
+  const [parentKey, setParentKey] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const [fontsLoaded] = useFonts({
     'LeagueSpartan-Bold': require('../assets/fonts/LeagueSpartan-Bold.ttf'),
   });
 
-  const handleLogin = () => {
-    // TODO: Implement authentication logic
-    // For now, just navigate to the main app
-    router.replace('/ParentDashboard');
+  useEffect(() => {
+    // Load last used parent key
+    AsyncStorage.getItem('lastParentKey').then(key => {
+      if (key) setParentKey(key);
+    });
+  }, []);
+
+  const handleLogin = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      // Search Parents node for matching authCode
+      const parentsRef = ref(db, 'Parents');
+      const snapshot = await get(parentsRef);
+      if (!snapshot.exists()) {
+        setError('No parent accounts found.');
+        setLoading(false);
+        return;
+      }
+      const parents = snapshot.val();
+      let foundParent = null;
+      for (const key in parents) {
+        if (parents[key].authCode === parentKey.trim()) {
+          foundParent = { ...parents[key], dbKey: key };
+          break;
+        }
+      }
+      if (!foundParent) {
+        setError('Invalid Parent Key. Please try again.');
+        setLoading(false);
+        return;
+      }
+      // Save last used key
+      await AsyncStorage.setItem('lastParentKey', parentKey.trim());
+      // Check if name or contact is missing/empty
+      const needsSetup = !foundParent.name || !foundParent.contact;
+      // Pass parentId and setup flag to dashboard
+      router.replace({
+        pathname: '/ParentDashboard',
+        params: { parentId: foundParent.dbKey, needsSetup: needsSetup ? '1' : '0' },
+      });
+    } catch (err) {
+      setError('Login failed. Please try again.');
+    }
+    setLoading(false);
   };
 
   if (!fontsLoaded) return null;
@@ -44,32 +89,22 @@ export default function ParentLogin() {
             <Text style={[styles.logoMath, { fontFamily: 'LeagueSpartan-Bold' }]}>MATH</Text>
             <Text style={[styles.logoTatag, { fontFamily: 'LeagueSpartan-Bold' }]}>TATAG</Text>
           </View>
-          <Text style={styles.title}>Login as Parent</Text>
+          <Text style={styles.title}>Parent Login</Text>
           <View style={styles.inputWrap}>
             <AntDesign name="idcard" size={22} color="#27ae60" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
-              placeholder="LRN"
+              placeholder="Enter Parent Key"
               placeholderTextColor="#888"
-              value={lrn}
-              onChangeText={setLrn}
-              autoCapitalize="none"
-              keyboardType="number-pad"
+              value={parentKey}
+              onChangeText={setParentKey}
+              autoCapitalize="characters"
+              autoCorrect={false}
             />
           </View>
-          <View style={styles.inputWrap}>
-            <AntDesign name="lock" size={22} color="#27ae60" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              placeholderTextColor="#888"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-          </View>
-          <TouchableOpacity style={styles.button} onPress={handleLogin} activeOpacity={0.85}>
-            <Text style={styles.buttonText}>Login</Text>
+          {error ? <Text style={{ color: '#ff5a5a', marginBottom: 8 }}>{error}</Text> : null}
+          <TouchableOpacity style={styles.button} onPress={handleLogin} activeOpacity={0.85} disabled={loading}>
+            <Text style={styles.buttonText}>{loading ? 'Logging in...' : 'Login'}</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>

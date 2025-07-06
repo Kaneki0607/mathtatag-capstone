@@ -1,7 +1,7 @@
 import { AntDesign, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { createUserWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
-import { get, onValue, ref, remove, set, update } from 'firebase/database';
+import { onAuthStateChanged } from 'firebase/auth';
+import { get, onValue, ref, remove, set } from 'firebase/database';
 import React, { useEffect, useState } from 'react';
 import { Alert, Dimensions, FlatList, ImageBackground, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,9 +16,9 @@ interface Student {
   id: string;
   studentNumber: string;
   nickname: string;
-  category: string;
-  preScore?: number;
-  postScore?: number;
+  category?: string; // Optional, only used in frontend
+  preScore?: { pattern: number; numbers: number };
+  postScore?: { pattern: number; numbers: number };
   classId: string;
   parentId?: string;
 }
@@ -28,12 +28,13 @@ interface ClassData {
   school: string;
   section: string;
   teacherId: string;
-  students: Student[];
+  studentIds: string[];
+  students?: Student[]; // Optional for runtime compatibility
   tasks: { title: string; details: string; status: string }[];
   learnersPerformance: { label: string; color: string; percent: number }[];
 }
 
-type ModalType = 'addClass' | 'addStudent' | 'announce' | 'category' | 'taskInfo' | 'classList' | 'startTest' | 'editStudent' | 'showImprovement' | 'evaluateStudent' | null;
+type ModalType = 'addClass' | 'addStudent' | 'announce' | 'category' | 'taskInfo' | 'classList' | 'startTest' | 'editStudent' | 'showImprovement' | 'evaluateStudent' | 'studentInfo' | null;
 
 export default function TeacherDashboard() {
   const [currentTeacher, setCurrentTeacher] = useState<any>(null);
@@ -60,6 +61,12 @@ export default function TeacherDashboard() {
   const [evaluationText, setEvaluationText] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [classes, setClasses] = useState<ClassData[]>([]);
+  const [prePattern, setPrePattern] = useState('0');
+  const [preNumbers, setPreNumbers] = useState('0');
+  const [postPattern, setPostPattern] = useState('0');
+  const [postNumbers, setPostNumbers] = useState('0');
+  const [announceTitle, setAnnounceTitle] = useState('');
 
   // Use theme-matching harmonious colors for the chart
   const defaultCategories = [
@@ -99,32 +106,39 @@ export default function TeacherDashboard() {
     if (!currentTeacher) return;
 
     const classesRef = ref(db, `Classes`);
-    const unsubscribe = onValue(classesRef, (snapshot) => {
+    const unsubscribe = onValue(classesRef, async (snapshot) => {
       const data = snapshot.val();
-      console.log('Classes data loaded:', data); // Debug log
       if (data) {
-        // Filter classes for current teacher using teacherId (MTTG25-001 format)
-        const teacherClasses = Object.values(data).filter((cls: any) => {
-          console.log('Checking class:', cls.id, 'teacherId:', cls.teacherId, 'currentTeacher:', currentTeacher.teacherId);
-          return cls.teacherId === currentTeacher.teacherId;
-        }).map((cls: any) => ({
-          ...cls,
-          students: cls.students || [],
-          school: cls.school || cls.className || 'Unknown School',
-          section: cls.section || cls.className || 'Unknown Section'
-        })) as ClassData[];
-        console.log('Filtered teacher classes:', teacherClasses);
-        setClasses(teacherClasses);
+        const teacherClasses = Object.values(data)
+          .filter((cls: any) => cls.teacherId === currentTeacher.teacherId);
+
+        // For each class, fetch up-to-date students from Students node
+        const updatedClasses = await Promise.all(teacherClasses.map(async (cls: any) => {
+          // If students is an array of student objects, get their IDs
+          const studentIds = Array.isArray(cls.studentIds) ? cls.studentIds : [];
+          // Fetch each student from Students node
+          const students = await Promise.all(studentIds.map(async (id: string) => {
+            const snap = await get(ref(db, `Students/${id}`));
+            return snap.exists() ? snap.val() : null;
+          }));
+          // Filter for unique students by id
+          const uniqueStudents = students.filter((s, idx, arr) => s && arr.findIndex(stu => stu.id === s.id) === idx);
+          return {
+            ...cls,
+            students: uniqueStudents, // Only unique students
+            school: cls.school || cls.className || 'Unknown School',
+            section: cls.section || cls.className || 'Unknown Section'
+          };
+        }));
+
+        setClasses(updatedClasses);
       } else {
-        console.log('No classes data found');
         setClasses([]);
       }
     });
 
     return () => unsubscribe();
   }, [currentTeacher]);
-
-  const [classes, setClasses] = useState<ClassData[]>([]);
 
   // Helper to get a class by id
   const getClassById = (id: string | null) => classes.find(cls => cls.id === id) || null;
@@ -187,9 +201,35 @@ export default function TeacherDashboard() {
       setSelectedClassId(extra?.classId);
     }
     if (type === 'startTest') {
-      setSelectedStudent(extra.student);
-      setTestType(extra.testType);
-      setSelectedClassId(extra.classId);
+      if (extra?.student) {
+        setSelectedStudent(extra.student);
+        setTestType(extra.testType);
+        setSelectedClassId(extra.classId);
+      }
+    }
+    if (type === 'editStudent') {
+      if (extra?.student) {
+        setEditingStudent(extra.student);
+        setEditingStudentName(extra.student.nickname);
+        setSelectedClassId(extra.classId);
+        // Initialize the form values
+        setPrePattern(extra.student?.preScore?.pattern?.toString() ?? '0');
+        setPreNumbers(extra.student?.preScore?.numbers?.toString() ?? '0');
+        setPostPattern(extra.student?.postScore?.pattern?.toString() ?? '0');
+        setPostNumbers(extra.student?.postScore?.numbers?.toString() ?? '0');
+      }
+    }
+    if (type === 'showImprovement') {
+      setImprovementData(extra);
+    }
+    if (type === 'evaluateStudent') {
+      setEvaluationData(extra);
+      setEvaluationText('');
+    }
+    if (type === 'studentInfo') {
+      if (extra?.student) {
+        setSelectedStudent(extra.student);
+      }
     }
     setModalVisible(true);
   };
@@ -202,6 +242,7 @@ export default function TeacherDashboard() {
     setClassName('');
     setStudentNickname('');
     setAnnounceText('');
+    setAnnounceTitle('');
     setSelectedCategory(null);
     setSelectedStudent(null);
     setTestType(null);
@@ -234,6 +275,7 @@ export default function TeacherDashboard() {
         school: schoolName,
         section: classSection.trim(),
         teacherId: currentTeacher.teacherId,
+        studentIds: [],
         students: [],
         tasks: [
           { title: 'Intervention', details: 'Remedial activities for struggling students', status: 'pending' },
@@ -300,85 +342,69 @@ export default function TeacherDashboard() {
       // Generate student ID in format: SCHOOLABBR-SECTION-YEAR-XXX
       const studentId = `${schoolAbbreviation.toUpperCase()}-${classData.section.toUpperCase()}-${currentYear}-${String(nextStudentNumber).padStart(3, '0')}`;
       
-      // Generate short parent email and stronger password (max 8 chars for password)
-      const shortYear = currentYear.toString().slice(-2); // Last 2 digits of year
-      const shortStudentNum = String(nextStudentNumber).padStart(3, '0');
-      let parentEmail = `p${shortYear}${shortStudentNum}@gmail.com`;
-      let parentPassword = `${shortYear}${shortStudentNum}@P`; // Added @P for strength
-      
-      // Create parent account in Firebase Auth
-      let parentUserCredential;
-      try {
-        parentUserCredential = await createUserWithEmailAndPassword(auth, parentEmail, parentPassword);
-      } catch (error: any) {
-        if (error.code === 'auth/email-already-in-use') {
-          // If email already exists, try with a random suffix
-          const randomSuffix = Math.floor(Math.random() * 100).toString().padStart(2, '0');
-          parentEmail = `p${shortYear}${shortStudentNum}${randomSuffix}@gmail.com`;
-          parentPassword = `${shortYear}${shortStudentNum}${randomSuffix}@P`; // Added @P for strength
-          parentUserCredential = await createUserWithEmailAndPassword(auth, parentEmail, parentPassword);
-        } else {
-          throw error;
+      // Generate a unique short auth code for the parent in the format AAA#### (3 uppercase letters + 4 digits)
+      let authCode = '';
+      let isUnique = false;
+      const randomLetters = () => Array.from({length: 3}, () => String.fromCharCode(65 + Math.floor(Math.random() * 26))).join('');
+      while (!isUnique) {
+        const letters = randomLetters();
+        const digits = Math.floor(1000 + Math.random() * 9000); // 4 digit random number
+        authCode = `${letters}${digits}`;
+        // Check uniqueness in Parents node
+        const parentsRef = ref(db, 'Parents');
+        const parentsSnapshot = await get(parentsRef);
+        let exists = false;
+        if (parentsSnapshot.exists()) {
+          const parents = parentsSnapshot.val();
+          exists = Object.values(parents).some((parent: any) => parent.authCode === authCode);
         }
+        if (!exists) isUnique = true;
       }
-      const parentUid = parentUserCredential.user.uid;
-      
-      // Add parent role to database
-      await update(ref(db, 'Roles'), { [`Parent/${parentUid}`]: true });
+      const parentId = `parent-${studentId}`;
       
       // Create parent data in database
       const parentData = {
-        accountId: parentUid,
-        email: parentEmail,
+        parentId,
+        authCode,
         studentId: studentId,
         name: `${studentNickname.trim()}'s Parent`,
         contact: '',
         createdAt: new Date().toISOString(),
+        householdIncome: '', // or default to first bracket if you prefer
       };
-      await set(ref(db, `Parents/${parentUid}`), parentData);
+      await set(ref(db, `Parents/${parentId}`), parentData);
       
       // Create student data
       const newStudent: Student = {
         id: studentId,
         studentNumber: studentId,
         nickname: studentNickname.trim(),
-        category: 'Intervention',
-        preScore: -1, // Default score -1 (will be updated to 0-10 when test is taken)
-        postScore: -1, // Default score -1 (will be updated to 0-10 when test is taken)
+        preScore: { pattern: 0, numbers: 0 },
+        postScore: { pattern: 0, numbers: 0 },
         classId: selectedClassId,
-        parentId: parentUid, // Link to parent account
+        parentId: parentId, // Link to parent record
       };
 
       // Add student to Students node
       await set(ref(db, `Students/${studentId}`), newStudent);
       
-      // Update the class's students array
+      // Update the class's studentIds array
       const updatedClassData = {
         ...classData,
-        students: [...(classData.students || []), newStudent]
+        studentIds: [...(classData.studentIds || []), studentId]
       };
       await set(ref(db, `Classes/${selectedClassId}`), updatedClassData);
       
       Alert.alert(
         'Success', 
-        `Student added successfully!\n\nStudent ID: ${studentId}\nParent Email: ${parentEmail}\nParent Password: ${parentPassword}`
+        `Student added successfully!\n\nStudent ID: ${studentId}\nParent Auth Code: ${authCode}`
       );
       closeModal();
     } catch (error: any) {
       let errorMessage = 'Failed to add student. Please try again.';
-      
-      if (error.code === 'auth/email-already-in-use') {
-        errorMessage = 'A parent account with this email already exists. Please try again.';
-      } else if (error.code === 'auth/invalid-email') {
-        errorMessage = 'Invalid email format. Please try again.';
-      } else if (error.code === 'auth/weak-password') {
-        errorMessage = 'Password is too weak. Please try again.';
-      } else if (error.code === 'auth/network-request-failed') {
-        errorMessage = 'Network error. Please check your connection and try again.';
-      } else if (error.message) {
+      if (error.message) {
         errorMessage = error.message;
       }
-      
       Alert.alert('Error', errorMessage);
     }
   };
@@ -703,20 +729,24 @@ export default function TeacherDashboard() {
     const windowWidth = Dimensions.get('window').width;
     const isSmall = windowWidth < 400;
     // Compute class average improvement and post-test average for this class
-    const studentsWithBoth = (cls.students || []).filter(s => {
-      return typeof s.preScore === 'number' && s.preScore !== -1 && 
-             typeof s.postScore === 'number' && s.postScore !== -1;
+    const studentsWithBoth = (cls.students ?? []).filter(s => {
+      const hasPre = s.preScore && typeof s.preScore.pattern === 'number' && typeof s.preScore.numbers === 'number';
+      const hasPost = s.postScore && typeof s.postScore.pattern === 'number' && typeof s.postScore.numbers === 'number';
+      // Consider as 'taken' if at least one part is > 0, or both are zero (i.e., test was submitted)
+      const preTaken = hasPre && (s.preScore.pattern > 0 || s.preScore.numbers > 0 || (s.preScore.pattern === 0 && s.preScore.numbers === 0));
+      const postTaken = hasPost && (s.postScore.pattern > 0 || s.postScore.numbers > 0 || (s.postScore.pattern === 0 && s.postScore.numbers === 0));
+      return preTaken && postTaken;
     });
     let avgImprovement = 0;
     let avgPost = 0;
     if (studentsWithBoth.length > 0) {
       const improvements = studentsWithBoth.map(s => {
-        const pre = s.preScore ?? 0;
-        const post = s.postScore ?? 0;
+        const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
+        const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
         return pre === 0 ? 100 : ((post - pre) / pre) * 100;
       });
       avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
-      avgPost = Math.round(studentsWithBoth.map(s => s.postScore ?? 0).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
+      avgPost = Math.round(studentsWithBoth.map(s => (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0)).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
     }
     let avgImprovementColor = '#ffe066';
     if (avgImprovement > 0) avgImprovementColor = '#27ae60';
@@ -769,12 +799,12 @@ export default function TeacherDashboard() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
                   <MaterialIcons name="bar-chart" size={20} color="#0097a7" style={{ marginRight: 4 }} />
                   <Text style={styles.compactCardLabel}>Avg. Post-test</Text>
-                  <Pressable onPress={() => Alert.alert('Average Post-test', 'This shows the average post-test score (out of 10) for students who took both tests.')}
+                  <Pressable onPress={() => Alert.alert('Average Post-test', 'This shows the average post-test score (out of 20) for students who took both tests.')}
                     style={{ marginLeft: 2 }}>
                     <MaterialIcons name="info-outline" size={13} color="#888" />
                   </Pressable>
                 </View>
-                <Text style={[styles.compactCardValue, { color: '#0097a7' }]}>{avgPost}/10</Text>
+                <Text style={[styles.compactCardValue, { color: '#0097a7' }]}>{avgPost}/20</Text>
               </View>
             </View>
           </View>
@@ -799,7 +829,7 @@ export default function TeacherDashboard() {
             />
             <TextInput
               style={styles.modalInput}
-              placeholder="School (optional)"
+              placeholder="School"
               value={classSchool}
               onChangeText={setClassSchool}
             />
@@ -828,12 +858,12 @@ export default function TeacherDashboard() {
             </Text>
             <TextInput
               style={styles.modalInput}
-              placeholder="Student Nickname (optional)"
+              placeholder="Student Nickname"
               value={studentNickname}
               onChangeText={setStudentNickname}
             />
             <Text style={styles.modalNote}>
-              Nickname can be the student's full name or any identifier you prefer. If left blank, student number will be used.
+              Nickname can be the student's full name or any identifier you prefer.
             </Text>
             <View style={styles.modalBtnRow}>
               <Pressable style={styles.modalBtn} onPress={closeModal}><Text style={styles.modalBtnText}>Cancel</Text></Pressable>
@@ -873,32 +903,33 @@ export default function TeacherDashboard() {
         // Realistic demo: some students have only pre, some both, none post without pre
         const getStudentTestStatus = (student: Student, type: 'pre' | 'post') => {
           if (type === 'pre') {
-            if (typeof student.preScore === 'number' && student.preScore !== -1) {
+            const pre = (student.preScore?.pattern ?? 0) + (student.preScore?.numbers ?? 0);
+            if (pre > 0) {
               return {
                 taken: true,
-                score: student.preScore,
-                total: 10,
-                category: getStatusFromScore(student.preScore, 10),
+                score: pre,
+                total: 20,
+                category: getStatusFromScore(pre, 20),
               };
             } else {
               return { taken: false, category: 'Not yet taken' };
             }
           } else {
-            // Only allow post if pre exists and is not -1
-            if (typeof student.preScore === 'number' && student.preScore !== -1 && 
-                typeof student.postScore === 'number' && student.postScore !== -1) {
+            const pre = (student.preScore?.pattern ?? 0) + (student.preScore?.numbers ?? 0);
+            const post = (student.postScore?.pattern ?? 0) + (student.postScore?.numbers ?? 0);
+            if (pre > 0 && post > 0) {
               return {
                 taken: true,
-                score: student.postScore,
-                total: 10,
-                category: getStatusFromScore(student.postScore, 10),
+                score: post,
+                total: 20,
+                category: getStatusFromScore(post, 20),
               };
             } else {
               return { taken: false, category: 'Not yet taken' };
             }
           }
         };
-        function getStudentStatusForSort(student: Student) {
+        function getStudentStatusForSort(student: Student): string {
           const postStatus = getStudentTestStatus(student, 'post');
           if (!postStatus.taken || !postStatus.category || !(postStatus.category in statusOrder)) return 'Not yet taken';
           return postStatus.category;
@@ -939,20 +970,24 @@ export default function TeacherDashboard() {
           }
         };
         // Compute class average improvement and post-test average
-        const studentsWithBoth = (cls.students || []).filter(s => {
-          return typeof s.preScore === 'number' && s.preScore !== -1 && 
-                 typeof s.postScore === 'number' && s.postScore !== -1;
+        const studentsWithBoth = (cls.students ?? []).filter(s => {
+          const hasPre = s.preScore && typeof s.preScore.pattern === 'number' && typeof s.preScore.numbers === 'number';
+          const hasPost = s.postScore && typeof s.postScore.pattern === 'number' && typeof s.postScore.numbers === 'number';
+          // Consider as 'taken' if at least one part is > 0, or both are zero (i.e., test was submitted)
+          const preTaken = hasPre && (s.preScore.pattern > 0 || s.preScore.numbers > 0 || (s.preScore.pattern === 0 && s.preScore.numbers === 0));
+          const postTaken = hasPost && (s.postScore.pattern > 0 || s.postScore.numbers > 0 || (s.postScore.pattern === 0 && s.postScore.numbers === 0));
+          return preTaken && postTaken;
         });
         let avgImprovement = 0;
         let avgPost = 0;
         if (studentsWithBoth.length > 0) {
           const improvements = studentsWithBoth.map(s => {
-            const pre = s.preScore ?? 0;
-            const post = s.postScore ?? 0;
+            const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
+            const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
             return pre === 0 ? 100 : ((post - pre) / pre) * 100;
           });
           avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
-          avgPost = Math.round(studentsWithBoth.map(s => s.postScore ?? 0).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
+          avgPost = Math.round(studentsWithBoth.map(s => (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0)).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
         }
         let avgImprovementColor = '#ffe066';
         if (avgImprovement > 0) avgImprovementColor = '#27ae60';
@@ -968,7 +1003,7 @@ export default function TeacherDashboard() {
               </View>
               <View style={{ flex: 1, alignItems: 'center' }}>
                 <Text style={{ fontWeight: 'bold', fontSize: 14, color: '#222' }}>Avg. Post-test</Text>
-                <Text style={{ fontWeight: 'bold', fontSize: 18, color: '#0097a7' }}>{avgPost}/10</Text>
+                <Text style={{ fontWeight: 'bold', fontSize: 18, color: '#0097a7' }}>{avgPost}/20</Text>
               </View>
             </View>
             {/* Column header row */}
@@ -1011,8 +1046,20 @@ export default function TeacherDashboard() {
                   return (
                     <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 18, marginBottom: 14, padding: 14, minWidth: 340, gap: 10, elevation: 2, shadowColor: '#27ae60', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }}>
                       <View style={{ flex: 1, minWidth: 90 }}>
-                        <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222', marginBottom: 2 }}>{item.nickname}</Text>
-                        <Text style={{ color: '#888', fontSize: 13 }}>{item.studentNumber}</Text>
+                        <TouchableOpacity onPress={() => openModal('studentInfo', { student: item, classId: cls.id })}>
+                          <Text style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 2 }}>
+                            <Text style={{ color: '#222', fontWeight: 'bold' }}>{item.nickname} </Text>
+                            <Text style={{ color: '#0097a7', fontWeight: 'bold' }}>{postStatus.score || 0}/20</Text>
+                          </Text>
+                          {/* Debug log for postScore */}
+                          {console.log('ClassListModal student:', item.nickname, 'postScore:', item.postScore)}
+                          <Text style={{ fontSize: 12, color: '#444' }}>
+                            Pattern: {typeof item.postScore?.pattern === 'number' ? item.postScore.pattern : 0}, Numbers: {typeof item.postScore?.numbers === 'number' ? item.postScore.numbers : 0}
+                          </Text>
+                          <View style={{ backgroundColor: statusColors[postStatus.category ?? ''] || '#888', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2, marginTop: 2, alignSelf: 'flex-start' }}>
+                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: 'bold' }}>{postStatus.category}</Text>
+                          </View>
+                        </TouchableOpacity>
                       </View>
                       {/* Pre-test button/status or improvement */}
                       {bothTaken ? (
@@ -1035,7 +1082,13 @@ export default function TeacherDashboard() {
                                   preStatus: preStatus.category,
                                   postStatus: postStatus.category,
                                 });
-                                openModal('showImprovement');
+                                openModal('showImprovement', {
+                                  student: item,
+                                  pre: preStatus.score || 0,
+                                  post: postStatus.score || 0,
+                                  preStatus: preStatus.category,
+                                  postStatus: postStatus.category,
+                                });
                               }}
                             >
                               <Text style={{ color: btnColor === '#ffe066' ? '#222' : '#fff', fontWeight: 'bold', fontSize: 12 }}>{percent > 0 ? '+' : ''}{percent}%</Text>
@@ -1047,7 +1100,9 @@ export default function TeacherDashboard() {
                           <TouchableOpacity
                             style={{ backgroundColor: '#e0f7fa', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, minWidth: 90, alignItems: 'center' }}
                           >
-                            <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 12 }}>Pre: {preStatus.score}/{preStatus.total}</Text>
+                            <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 12 }}>
+                              Pre: {item.preScore ? ((item.preScore.pattern ?? 0) + (item.preScore.numbers ?? 0)).toString() : 'N/A'}/20
+                            </Text>
                           </TouchableOpacity>
                           <Text style={{ fontSize: 10, color: statusColors[preStatus.category ?? ''] || '#888', marginTop: 2, fontWeight: '600' }}>{preStatus.category}</Text>
                         </View>
@@ -1064,9 +1119,7 @@ export default function TeacherDashboard() {
                         <TouchableOpacity
                           style={{ backgroundColor: '#6c63ff', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, minWidth: 90, alignItems: 'center', marginRight: 4 }}
                           onPress={() => {
-                            setEvaluationData({ student: item, classId: cls.id });
-                            setEvaluationText('');
-                            openModal('evaluateStudent');
+                            openModal('evaluateStudent', { student: item, classId: cls.id });
                           }}
                         >
                           <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>Evaluate</Text>
@@ -1076,7 +1129,9 @@ export default function TeacherDashboard() {
                           <TouchableOpacity
                             style={{ backgroundColor: '#e0f7fa', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, minWidth: 90, alignItems: 'center' }}
                           >
-                            <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 12 }}>Post: {postStatus.score}/{postStatus.total}</Text>
+                            <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 12 }}>
+                              Post: {item.postScore ? ((item.postScore.pattern ?? 0) + (item.postScore.numbers ?? 0)).toString() : 'N/A'}/20
+                            </Text>
                           </TouchableOpacity>
                           <Text style={{ fontSize: 10, color: statusColors[postStatus.category ?? ''] || '#888', marginTop: 2, fontWeight: '600' }}>{postStatus.category}</Text>
                         </View>
@@ -1090,9 +1145,7 @@ export default function TeacherDashboard() {
                       )}
                       {/* Edit and Delete buttons remain unchanged */}
                       <TouchableOpacity style={{ backgroundColor: '#0a7ea4', borderRadius: 8, padding: 6, marginRight: 4 }} onPress={() => {
-                        setEditingStudent(item);
-                        setEditingStudentName(item.nickname);
-                        openModal('editStudent');
+                        openModal('editStudent', { student: item, classId: cls.id });
                       }}>
                         <MaterialIcons name="edit" size={18} color="#fff" />
                       </TouchableOpacity>
@@ -1135,21 +1188,65 @@ export default function TeacherDashboard() {
           </View>
         );
       case 'announce':
-        const handleSendAnnouncement = () => {
-          Alert.alert(
-            'Send Announcement',
-            'Are you sure you want to send this announcement to the parents of the class?',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Send', style: 'destructive', onPress: () => closeModal() },
-            ]
-          );
+        // Debug log for canSend state
+        console.log('ANNOUNCE DEBUG', { announceTitle, announceText, selectedClassId, teacherId: currentTeacher?.teacherId });
+        // If no class is selected, show a dropdown to select class
+        const canSend = !!announceTitle.trim() && !!announceText.trim() && !!selectedClassId && !!currentTeacher?.teacherId;
+        const handleSendAnnouncement = async () => {
+          if (!announceTitle.trim() || !announceText.trim() || !selectedClassId || !currentTeacher?.teacherId) {
+            Alert.alert('Error', 'Please enter a title and message.');
+            return;
+          }
+          try {
+            const announcementId = `ANN-${Date.now()}`;
+            const date = new Date().toISOString();
+            const announcement = {
+              announcementid: announcementId,
+              classid: selectedClassId,
+              title: announceTitle.trim(),
+              message: announceText.trim(),
+              date,
+              teacherid: currentTeacher.teacherId,
+            };
+            await set(ref(db, `Announcements/${announcementId}`), announcement);
+            Alert.alert('Success', 'Announcement sent!');
+            setAnnounceTitle('');
+            closeModal();
+          } catch (err) {
+            Alert.alert('Error', 'Failed to send announcement.');
+          }
         };
+        // Auto-select class if only one class exists and selectedClassId is not set
+        if (modalType === 'announce' && classes.length === 1 && !selectedClassId) {
+          setSelectedClassId(classes[0].id);
+        }
         return (
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>Send Announcement</Text>
+            {!selectedClassId && (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={{ fontWeight: 'bold', color: '#222', marginBottom: 4 }}>Select Class</Text>
+                <View style={{ borderWidth: 1, borderColor: '#e0f7e2', borderRadius: 8, backgroundColor: '#f9f9f9' }}>
+                  {classes.map(cls => (
+                    <Pressable key={cls.id} style={{ padding: 10 }} onPress={() => setSelectedClassId(cls.id)}>
+                      <Text style={{ color: '#27ae60', fontWeight: 'bold' }}>{cls.section} ({cls.school})</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            )}
+            <View style={{ marginBottom: 10 }}>
+              <Text style={{ fontWeight: 'bold', color: '#222', marginBottom: 4 }}>Title</Text>
+              <TextInput
+                style={[styles.modalInput, { marginBottom: 0 }]}
+                placeholder="Announcement Title"
+                value={announceTitle}
+                onChangeText={setAnnounceTitle}
+              />
+            </View>
+            <Text style={{ fontWeight: 'bold', color: '#222', marginBottom: 4 }}>Message</Text>
             <TextInput
-              style={[styles.modalInput, { minHeight: 80, textAlignVertical: 'top' }]}
+              style={[styles.modalInput, { minHeight: 130, textAlignVertical: 'top' }]}
               placeholder="Type your announcement here..."
               value={announceText}
               onChangeText={setAnnounceText}
@@ -1158,33 +1255,156 @@ export default function TeacherDashboard() {
             />
             <View style={styles.modalBtnRow}>
               <Pressable style={styles.modalBtn} onPress={closeModal}><Text style={styles.modalBtnText}>Cancel</Text></Pressable>
-              <Pressable style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={handleSendAnnouncement}><Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Send</Text></Pressable>
-          </View>
+              <Pressable style={[styles.modalBtn, styles.modalBtnPrimary, { opacity: canSend ? 1 : 0.5 }]} onPress={canSend ? handleSendAnnouncement : undefined} disabled={!canSend}>
+                <Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Send</Text>
+              </Pressable>
+            </View>
           </View>
         );
       case 'editStudent':
+        if (!editingStudent) return null;
+        // Validation logic
+        const editPreTotal = Number(prePattern) + Number(preNumbers);
+        const editPostTotal = Number(postPattern) + Number(postNumbers);
+        const preOver = editPreTotal > 20;
+        const postOver = editPostTotal > 20;
+        const handleSaveEditStudent = async () => {
+          if (editingStudent && selectedClassId) {
+            if (preOver || postOver) {
+              Alert.alert('Invalid Score', 'Pre-test and Post-test totals must not exceed 20.');
+              return;
+            }
+            // Build the updated student object first
+            const updatedStudent: Student = {
+              ...editingStudent,
+              nickname: editingStudentName.trim(),
+              preScore: { pattern: Number(prePattern), numbers: Number(preNumbers) },
+              postScore: { pattern: Number(postPattern), numbers: Number(postNumbers) },
+            };
+            // Update local state
+            setClasses(prev =>
+              prev.map(cls =>
+                cls.id !== selectedClassId
+                  ? cls
+                  : {
+                      ...cls,
+                      students: (cls.students ?? []).map(student =>
+                        student.id === editingStudent.id ? updatedStudent : student
+                      ),
+                    }
+              )
+            );
+            // Update in Firebase DB
+            try {
+              console.log("Attempting to update student in DB:", updatedStudent);
+              await set(ref(db, `Students/${updatedStudent.id}`), updatedStudent);
+              console.log("Student updated successfully in DB");
+            } catch (err) {
+              console.error("Failed to update student in DB:", err);
+              Alert.alert("Error", "Failed to update student in the database.");
+              return;
+            }
+            closeModal();
+          }
+        };
         return (
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Edit Student</Text>
-            <Text style={styles.modalStat}>
-              Student Number: <Text style={styles.modalStatNum}>{editingStudent?.studentNumber}</Text>
-            </Text>
+          <View style={[styles.modalBox, { paddingBottom: 18 }]}> 
+            <Text style={[styles.modalTitle, { marginBottom: 8 }]}>Edit Student</Text>
+            {/* Section: Student Info */}
+            <Text style={{ fontWeight: 'bold', color: '#27ae60', fontSize: 15, marginBottom: 2 }}>Student Information</Text>
+            <Text style={{ fontSize: 13, color: '#888', marginBottom: 2 }}>Student Number</Text>
+            <View style={{ backgroundColor: '#f3f3f3', borderRadius: 8, padding: 8, marginBottom: 2 }}>
+              <Text selectable style={{ color: '#27ae60', fontWeight: 'bold', fontSize: 15 }}>{editingStudent?.studentNumber}</Text>
+            </View>
+            <Text style={{ fontSize: 11, color: '#aaa', marginBottom: 8 }}>This is the system-generated student number.</Text>
+            <Text style={{ fontSize: 13, color: '#888', marginBottom: 2 }}>Student Name</Text>
             <TextInput
-              style={styles.modalInput}
+              style={[styles.modalInput, { marginBottom: 10 }]}
               placeholder="Enter new student name"
               value={editingStudentName}
               onChangeText={setEditingStudentName}
             />
-            <View style={styles.modalBtnRow}>
+            {/* Section: Test Scores */}
+            <Text style={{ fontWeight: 'bold', color: '#27ae60', fontSize: 15, marginBottom: 2 }}>Test Scores</Text>
+            {/* Pre-test */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+              <Text style={{ fontSize: 14, color: '#222', fontWeight: 'bold', marginRight: 4 }}>📝 Pre-test (out of 20):</Text>
+              {preOver && <Text style={{ color: '#ff5a5a', fontSize: 12, marginLeft: 4 }}>*Total exceeds 20!</Text>}
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 2 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>Pattern</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: '#f9f9f9' }]}
+                  placeholder="Pattern"
+                  keyboardType="numeric"
+                  value={prePattern}
+                  onChangeText={setPrePattern}
+                  maxLength={2}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>Numbers</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: '#f9f9f9' }]}
+                  placeholder="Numbers"
+                  keyboardType="numeric"
+                  value={preNumbers}
+                  onChangeText={setPreNumbers}
+                  maxLength={2}
+                />
+              </View>
+            </View>
+            <Text style={{ fontSize: 11, color: '#aaa', marginBottom: 8, marginTop: 0 }}>Enter the number of correct answers for each part.</Text>
+            {/* Post-test */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+              <Text style={{ fontSize: 14, color: '#222', fontWeight: 'bold', marginRight: 4 }}>✅ Post-test (out of 20):</Text>
+              {postOver && <Text style={{ color: '#ff5a5a', fontSize: 12, marginLeft: 4 }}>*Total exceeds 20!</Text>}
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 2 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>Pattern</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: '#f9f9f9' }]}
+                  placeholder="Pattern"
+                  keyboardType="numeric"
+                  value={postPattern}
+                  onChangeText={setPostPattern}
+                  maxLength={2}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>Numbers</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: '#f9f9f9' }]}
+                  placeholder="Numbers"
+                  keyboardType="numeric"
+                  value={postNumbers}
+                  onChangeText={setPostNumbers}
+                  maxLength={2}
+                />
+              </View>
+            </View>
+            <Text style={{ fontSize: 11, color: '#aaa', marginBottom: 12, marginTop: 0 }}>Enter the number of correct answers for each part.</Text>
+            {/* Buttons */}
+            <View style={[styles.modalBtnRow, { marginTop: 10 }]}> 
               <Pressable style={styles.modalBtn} onPress={closeModal}><Text style={styles.modalBtnText}>Cancel</Text></Pressable>
-              <Pressable style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={editStudent}><Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Save</Text></Pressable>
+              <Pressable style={[styles.modalBtn, styles.modalBtnPrimary, { flexDirection: 'row', alignItems: 'center', gap: 4 }]} onPress={handleSaveEditStudent}>
+                <MaterialIcons name="save" size={18} color="#fff" style={{ marginRight: 4 }} />
+                <Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Save</Text>
+              </Pressable>
             </View>
           </View>
         );
       case 'showImprovement':
         if (!improvementData) return null;
         const { student, pre, post, preStatus, postStatus } = improvementData;
-        const percent = pre === 0 ? 100 : Math.round(((post - pre) / pre) * 100);
+        // Use the actual student object to get pattern/numbers breakdown
+        const preScore = student.preScore || { pattern: 0, numbers: 0 };
+        const postScore = student.postScore || { pattern: 0, numbers: 0 };
+        const preTotal = (preScore.pattern ?? 0) + (preScore.numbers ?? 0);
+        const postTotal = (postScore.pattern ?? 0) + (postScore.numbers ?? 0);
+        const percent = preTotal === 0 ? 100 : Math.round(((postTotal - preTotal) / preTotal) * 100);
         let percentColor = '#ffe066'; // yellow by default
         if (percent > 0) percentColor = '#27ae60'; // green
         else if (percent < 0) percentColor = '#ff5a5a'; // red
@@ -1192,18 +1412,31 @@ export default function TeacherDashboard() {
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>Improvement Details</Text>
             <Text style={styles.modalStat}>Student: <Text style={styles.modalStatNum}>{student.nickname}</Text></Text>
-            <Text style={styles.modalStat}>Pre-test: <Text style={styles.modalStatNum}>{pre}/10</Text> ({preStatus})</Text>
-            <Text style={styles.modalStat}>Post-test: <Text style={styles.modalStatNum}>{post}/10</Text> ({postStatus})</Text>
+            <Text style={styles.modalStat}>Pre-test: <Text style={styles.modalStatNum}>{String(preTotal)}/20</Text> (Pattern: {String(preScore.pattern ?? 0)}, Numbers: {String(preScore.numbers ?? 0)})</Text>
+            <Text style={styles.modalStat}>Post-test: <Text style={styles.modalStatNum}>{String(postTotal)}/20</Text> (Pattern: {String(postScore.pattern ?? 0)}, Numbers: {String(postScore.numbers ?? 0)})</Text>
             <Text style={styles.modalStat}>Improvement: <Text style={[styles.modalStatNum, { color: percentColor }]}>{percent > 0 ? '+' : ''}{percent}%</Text></Text>
             <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
           </View>
         );
       case 'evaluateStudent':
         if (!evaluationData) return null;
+        // Get the student object and breakdown
+        const evalStudent = evaluationData.student;
+        const evalPreScore = evalStudent.preScore || { pattern: 0, numbers: 0 };
+        const evalPostScore = evalStudent.postScore || { pattern: 0, numbers: 0 };
+        const evalPreTotal = (evalPreScore.pattern ?? 0) + (evalPreScore.numbers ?? 0);
+        const evalPostTotal = (evalPostScore.pattern ?? 0) + (evalPostScore.numbers ?? 0);
+        const evalPercent = evalPreTotal === 0 ? 100 : Math.round(((evalPostTotal - evalPreTotal) / evalPreTotal) * 100);
+        let evalPercentColor = '#ffe066';
+        if (evalPercent > 0) evalPercentColor = '#27ae60';
+        else if (evalPercent < 0) evalPercentColor = '#ff5a5a';
         return (
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>Send Evaluation to Parent</Text>
-            <Text style={styles.modalStat}>Student: <Text style={styles.modalStatNum}>{evaluationData.student.nickname}</Text></Text>
+            <Text style={styles.modalStat}>Student: <Text style={styles.modalStatNum}>{evalStudent.nickname}</Text></Text>
+            <Text style={styles.modalStat}>Pre-test: <Text style={styles.modalStatNum}>{String(evalPreTotal)}/20</Text> (Pattern: {String(evalPreScore.pattern ?? 0)}, Numbers: {String(evalPreScore.numbers ?? 0)})</Text>
+            <Text style={styles.modalStat}>Post-test: <Text style={styles.modalStatNum}>{String(evalPostTotal)}/20</Text> (Pattern: {String(evalPostScore.pattern ?? 0)}, Numbers: {String(evalPostScore.numbers ?? 0)})</Text>
+            <Text style={styles.modalStat}>Improvement: <Text style={[styles.modalStatNum, { color: evalPercentColor }]}>{evalPercent > 0 ? '+' : ''}{evalPercent}%</Text></Text>
             <TextInput
               style={[styles.modalInput, { minHeight: 80, textAlignVertical: 'top' }]}
               placeholder="Type your evaluation here..."
@@ -1212,7 +1445,7 @@ export default function TeacherDashboard() {
               multiline
               numberOfLines={4}
             />
-                  <View style={styles.modalBtnRow}>
+            <View style={styles.modalBtnRow}>
               <Pressable style={styles.modalBtn} onPress={closeModal}><Text style={styles.modalBtnText}>Cancel</Text></Pressable>
               <Pressable style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={() => {
                 Alert.alert('Send Evaluation', 'Are you sure you want to send this evaluation to the parent?', [
@@ -1221,6 +1454,18 @@ export default function TeacherDashboard() {
                 ]);
               }}><Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Send Evaluation</Text></Pressable>
             </View>
+          </View>
+        );
+      case 'studentInfo':
+        return (
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Student Information</Text>
+            <Text style={styles.modalStat}>Student: <Text style={styles.modalStatNum}>{selectedStudent?.nickname}</Text></Text>
+            <Text style={styles.modalStat}>Number: <Text style={styles.modalStatNum}>{selectedStudent?.studentNumber}</Text></Text>
+            <Text style={styles.modalStat}>Category: <Text style={styles.modalStatNum}>{selectedStudent?.category}</Text></Text>
+            <Text style={styles.modalStat}>Pre-test: <Text style={styles.modalStatNum}>{selectedStudent?.preScore ? String((selectedStudent.preScore.pattern ?? 0) + (selectedStudent.preScore.numbers ?? 0)) : 'N/A'}/20</Text> (Pattern: {String(selectedStudent?.preScore?.pattern ?? 0)}, Numbers: {String(selectedStudent?.preScore?.numbers ?? 0)})</Text>
+            <Text style={styles.modalStat}>Post-test: <Text style={styles.modalStatNum}>{selectedStudent?.postScore ? String((selectedStudent.postScore.pattern ?? 0) + (selectedStudent.postScore.numbers ?? 0)) : 'N/A'}/20</Text> (Pattern: {String(selectedStudent?.postScore?.pattern ?? 0)}, Numbers: {String(selectedStudent?.postScore?.numbers ?? 0)})</Text>
+            <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
           </View>
         );
       default:
