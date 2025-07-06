@@ -1,8 +1,7 @@
-import { AntDesign, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { Audio } from 'expo-av';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
 import { onAuthStateChanged } from 'firebase/auth';
 import { get, onValue, ref, remove, set } from 'firebase/database';
 import React, { useEffect, useState } from 'react';
@@ -12,8 +11,6 @@ import { G, Path, Svg } from 'react-native-svg';
 import { auth, db } from '../constants/firebaseConfig';
 
 const bgImage = require('../assets/images/bg.jpg');
-
-const { width } = Dimensions.get('window');
 
 interface Student {
   id: string;
@@ -81,22 +78,18 @@ function getPerformanceDistribution(students: Student[] = [], type: 'pre' | 'pos
 }
 
 export default function TeacherDashboard() {
-  const router = useRouter();
   const [currentTeacher, setCurrentTeacher] = useState<any>(null);
   const [teacherName, setTeacherName] = useState('');
   const [modalType, setModalType] = useState<ModalType>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [classSection, setClassSection] = useState('');
   const [classSchool, setClassSchool] = useState('');
-  const [className, setClassName] = useState('');
   const [studentNickname, setStudentNickname] = useState('');
   const [announceText, setAnnounceText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [testType, setTestType] = useState<'pre' | 'post' | null>(null);
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
-  const [selectedPerformance, setSelectedPerformance] = useState<{ classId: string, idx: number } | null>(null);
-  const [showTooltip, setShowTooltip] = useState(false);
   const [sortColumn, setSortColumn] = useState<'name' | 'status' | 'pre' | 'post'>('name');
   const [sortAsc, setSortAsc] = useState(true);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
@@ -105,7 +98,6 @@ export default function TeacherDashboard() {
   const [evaluationData, setEvaluationData] = useState<{ student: Student, classId: string } | null>(null);
   const [evaluationText, setEvaluationText] = useState('');
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [classes, setClasses] = useState<ClassData[]>([]);
   const [prePattern, setPrePattern] = useState('0');
   const [preNumbers, setPreNumbers] = useState('0');
@@ -203,49 +195,28 @@ export default function TeacherDashboard() {
   // Helper to get a class by id
   const getClassById = (id: string | null) => classes.find(cls => cls.id === id) || null;
 
-  // Manual refresh function
-  const refreshData = async () => {
-    setRefreshing(true);
-    try {
-      if (currentTeacher) {
-        const classesRef = ref(db, `Classes`);
-        const snapshot = await get(classesRef);
-        const data = snapshot.val();
-        console.log('Manual refresh - Classes data:', data);
-        if (data) {
-          const teacherClasses = Object.values(data).filter((cls: any) => {
-            console.log('Manual refresh - Checking class:', cls.id, 'teacherId:', cls.teacherId, 'currentTeacher:', currentTeacher.teacherId);
-            return cls.teacherId === currentTeacher.teacherId;
-          }).map((cls: any) => ({
-            ...cls,
-            students: cls.students || [],
-            school: cls.school || cls.className || 'Unknown School',
-            section: cls.section || cls.className || 'Unknown Section'
-          })) as ClassData[];
-          console.log('Manual refresh - Filtered teacher classes:', teacherClasses);
-          setClasses(teacherClasses);
-        } else {
-          setClasses([]);
-        }
-      }
-    } catch (error) {
-      console.error('Error refreshing data:', error);
-      Alert.alert('Error', 'Failed to refresh data. Please try again.');
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
   // Analytics calculations
   const totalClasses = classes?.length || 0;
   const totalStudents = classes?.reduce((sum, c) => sum + (c.students?.length || 0), 0) || 0;
   const allPerformance = classes?.flatMap(c => c.learnersPerformance?.map(lp => lp.percent) || []) || [];
+  // For dashboard avgImprovement, only include students with both pre and post and pre > 0
+  const allStudentsWithBoth = classes.flatMap(cls => (cls.students ?? []).filter(s => {
+    const hasPre = s.preScore && typeof s.preScore.pattern === 'number' && typeof s.preScore.numbers === 'number';
+    const hasPost = s.postScore && typeof s.postScore.pattern === 'number' && typeof s.postScore.numbers === 'number';
+    const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
+    const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
+    return hasPre && hasPost && pre > 0 && post >= 0;
+  }));
   const avgPerformance = allPerformance.length ? Math.round(allPerformance.reduce((a, b) => a + b, 0) / allPerformance.length) : 0;
-  const mostImprovedGroup = (() => {
-    // For demo, just pick the group with the highest percent in the first class
-    if (!classes?.[0]?.learnersPerformance) return 'N/A';
-    return classes[0].learnersPerformance.reduce((a, b) => (a.percent > b.percent ? a : b)).label;
-  })();
+  let dashboardAvgImprovement = 0;
+  if (allStudentsWithBoth.length > 0) {
+    const improvements = allStudentsWithBoth.map(s => {
+      const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
+      const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
+      return pre > 0 ? ((post - pre) / pre) * 100 : 0;
+    });
+    dashboardAvgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
+  }
 
   // Modal open/close helpers
   const openModal = (type: ModalType, extra: any = null) => {
@@ -312,7 +283,6 @@ export default function TeacherDashboard() {
     setModalType(null);
     setClassSection('');
     setClassSchool('');
-    setClassName('');
     setStudentNickname('');
     setAnnounceText('');
     setAnnounceTitle('');
@@ -580,50 +550,7 @@ export default function TeacherDashboard() {
       closeModal();
   };
 
-  // Modern, 3D/gradient, adaptive analytics cards
-  function AnalyticsCards() {
-    return (
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2, gap: 4, flexWrap: 'wrap' }}>
-        <LinearGradient colors={['#e0ffe6', '#c6f7e2']} style={styles.analyticsCard}>
-          <AntDesign name="appstore1" size={32} color="#27ae60" style={styles.analyticsIcon} />
-          <Text style={styles.analyticsValue}>{totalClasses}</Text>
-          <Text style={styles.analyticsLabel}>Total{'\n'}Classes</Text>
-        </LinearGradient>
-        <LinearGradient colors={['#e0f7fa', '#b2ebf2']} style={styles.analyticsCard}>
-          <MaterialCommunityIcons name="account-group" size={32} color="#0097a7" style={styles.analyticsIcon} />
-          <Text style={styles.analyticsValue}>{totalStudents}</Text>
-          <Text style={styles.analyticsLabel}>Total{'\n'}Students</Text>
-        </LinearGradient>
-        <LinearGradient colors={['#fffde4', '#ffe066']} style={styles.analyticsCard}>
-          <AntDesign name="piechart" size={32} color="#ffb300" style={styles.analyticsIcon} />
-          <Text style={styles.analyticsValue}>{avgPerformance}%</Text>
-          <Text style={styles.analyticsLabel}>Average{'\n'}Performance</Text>
-        </LinearGradient>
-      </View>
-    );
-  }
 
-  // Modern student count card with icon and number
-  function StudentCountCard({ count, iconSize = 24, fontSize = 18 }: { count: number, iconSize?: number, fontSize?: number }) {
-    return (
-      <View style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#e0f7fa',
-        borderRadius: 12,
-        paddingVertical: 4,
-        paddingHorizontal: 8,
-        marginTop: 2,
-        marginRight: 0,
-        marginBottom: 4,
-        minWidth: 40,
-        justifyContent: 'center',
-      }}>
-        <MaterialCommunityIcons name="account-group" size={iconSize} color="#0097a7" style={{ marginRight: 4 }} />
-        <Text style={{ fontSize, fontWeight: 'bold', color: '#0097a7' }}>{count}</Text>
-      </View>
-    );
-  }
 
   // Responsive pie chart with legend always side by side
   function AnalyticsPieChartWithLegend({ data, reverse = false, title = 'Pretest Performance' }: { data: { label: string; color: string; percent: number }[], reverse?: boolean, title?: string }) {
@@ -727,42 +654,7 @@ export default function TeacherDashboard() {
     );
   }
 
-  const StudentItem = ({ item, classId }: { item: Student; classId: string }) => {
-    const handleDeleteStudent = () => {
-      deleteStudent(item.id);
-    };
 
-    return (
-      <View style={styles.studentItem}>
-        <View style={styles.studentInfo}>
-          <Text style={styles.studentNickname}>{item.nickname}</Text>
-          <Text style={styles.studentNumber}>ID: {item.studentNumber}</Text>
-        </View>
-        <View style={styles.testButtons}>
-          <TouchableOpacity 
-            style={[styles.testButton, styles.preTestButton]} 
-            onPress={() => openModal('startTest', { student: item, testType: 'pre', classId })}
-          >
-            <Text style={styles.testButtonText}>Pre: {item.preScore ? `${(item.preScore.pattern || 0) + (item.preScore.numbers || 0)}` : '0'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.testButton, styles.postTestButton]} 
-            onPress={() => openModal('startTest', { student: item, testType: 'post', classId })}
-          >
-            <Text style={styles.testButtonText}>Post: {item.postScore ? `${(item.postScore.pattern || 0) + (item.postScore.numbers || 0)}` : '0'}</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
-  const StudentItemRenderer = ({ item, classId }: { item: Student; classId: string }) => (
-    <StudentItem item={item} classId={classId} />
-  );
-
-  const renderStudentItem = (classId: string) => ({ item }: { item: Student }) => (
-    <StudentItemRenderer item={item} classId={classId} />
-  );
 
   if (loading) {
     return (
@@ -798,14 +690,6 @@ export default function TeacherDashboard() {
 
   // Render each class panel
   const renderClassPanel = (cls: ClassData) => {
-    // Group students by category
-    const studentsByCategory: Record<string, Student[]> = {};
-    (cls.students || []).forEach(student => {
-      if (student.category) {
-        if (!studentsByCategory[student.category]) studentsByCategory[student.category] = [];
-        studentsByCategory[student.category].push(student);
-      }
-    });
     // Delete class handler
     const handleDeleteClass = () => {
       Alert.alert('Delete Class', `Are you sure you want to delete class ${cls.section}?`, [
@@ -821,10 +705,10 @@ export default function TeacherDashboard() {
     const studentsWithBoth = (cls.students ?? []).filter(s => {
       const hasPre = s.preScore && typeof s.preScore.pattern === 'number' && typeof s.preScore.numbers === 'number';
       const hasPost = s.postScore && typeof s.postScore.pattern === 'number' && typeof s.postScore.numbers === 'number';
-      // Consider as 'taken' if at least one part is > 0, or both are zero (i.e., test was submitted)
-      const preTaken = hasPre && s.preScore && (s.preScore.pattern > 0 || s.preScore.numbers > 0 || (s.preScore.pattern === 0 && s.preScore.numbers === 0));
-      const postTaken = hasPost && s.postScore && (s.postScore.pattern > 0 || s.postScore.numbers > 0 || (s.postScore.pattern === 0 && s.postScore.numbers === 0));
-      return preTaken && postTaken;
+      // Only include if both pre and post exist and pre > 0
+      const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
+      const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
+      return hasPre && hasPost && pre > 0 && post >= 0;
     });
     let avgImprovement = 0;
     let avgPost = 0;
@@ -832,7 +716,7 @@ export default function TeacherDashboard() {
       const improvements = studentsWithBoth.map(s => {
         const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
         const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
-        return pre === 0 ? 100 : ((post - pre) / pre) * 100;
+        return pre > 0 ? ((post - pre) / pre) * 100 : 0;
       });
       avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
       avgPost = Math.round(studentsWithBoth.map(s => (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0)).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
@@ -850,7 +734,22 @@ export default function TeacherDashboard() {
           </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginBottom: isSmall ? 10 : 18, gap: 6, flexWrap: 'wrap', alignSelf: 'flex-end' }}>
               <TouchableOpacity onPress={() => openModal('classList', { classId: cls.id })} activeOpacity={0.8} style={{ borderRadius: 20, overflow: 'hidden', maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
-                <StudentCountCard count={cls.students?.length || 0} iconSize={22} fontSize={16} />
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: '#e0f7fa',
+                  borderRadius: 12,
+                  paddingVertical: 4,
+                  paddingHorizontal: 8,
+                  marginTop: 2,
+                  marginRight: 0,
+                  marginBottom: 4,
+                  minWidth: 40,
+                  justifyContent: 'center',
+                }}>
+                  <MaterialCommunityIcons name="account-group" size={22} color="#0097a7" style={{ marginRight: 4 }} />
+                  <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0097a7' }}>{cls.students?.length || 0}</Text>
+                </View>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => openModal('addStudent', { classId: cls.id })} style={{ backgroundColor: '#e0f7fa', borderRadius: 20, padding: 6, alignItems: 'center', justifyContent: 'center', elevation: 2, shadowColor: '#0097a7', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
                 <MaterialIcons name="person-add" size={22} color="#0097a7" />
@@ -1062,10 +961,10 @@ export default function TeacherDashboard() {
         const studentsWithBoth = (cls.students ?? []).filter(s => {
           const hasPre = s.preScore && typeof s.preScore.pattern === 'number' && typeof s.preScore.numbers === 'number';
           const hasPost = s.postScore && typeof s.postScore.pattern === 'number' && typeof s.postScore.numbers === 'number';
-          // Consider as 'taken' if at least one part is > 0, or both are zero (i.e., test was submitted)
-          const preTaken = hasPre && s.preScore && (s.preScore.pattern > 0 || s.preScore.numbers > 0 || (s.preScore.pattern === 0 && s.preScore.numbers === 0));
-          const postTaken = hasPost && s.postScore && (s.postScore.pattern > 0 || s.postScore.numbers > 0 || (s.postScore.pattern === 0 && s.postScore.numbers === 0));
-          return preTaken && postTaken;
+          // Only include if both pre and post exist and pre > 0
+          const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
+          const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
+          return hasPre && hasPost && pre > 0 && post >= 0;
         });
         let avgImprovement = 0;
         let avgPost = 0;
@@ -1073,7 +972,7 @@ export default function TeacherDashboard() {
           const improvements = studentsWithBoth.map(s => {
             const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
             const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
-            return pre === 0 ? 100 : ((post - pre) / pre) * 100;
+            return pre > 0 ? ((post - pre) / pre) * 100 : 0;
           });
           avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
           avgPost = Math.round(studentsWithBoth.map(s => (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0)).reduce((a, b) => a + b, 0) / studentsWithBoth.length);
@@ -1592,7 +1491,6 @@ export default function TeacherDashboard() {
                   </TouchableOpacity>
               </View>
                 <View style={{ height: 8 }} />
-                <AnalyticsCards />
                 {classes.map(cls => (
                   <React.Fragment key={cls.id}>
                     {renderClassPanel(cls)}
@@ -1632,8 +1530,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     alignItems: 'center',
-    paddingBottom: 32,
-    paddingHorizontal: 16,
+    paddingBottom: 0,
+    paddingHorizontal: 0,
     width: '100%',
     minHeight: '100%',
     zIndex: 2,
@@ -1680,7 +1578,7 @@ const styles = StyleSheet.create({
   },
   headerWrap: {
     width: '100%',
-    paddingTop: 16,
+    paddingTop: 0,
     paddingBottom: 16,
     backgroundColor: 'rgba(255,255,255,0.96)',
     borderBottomLeftRadius: 28,
@@ -1699,7 +1597,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     width: '100%',
     paddingHorizontal: 24,
-    marginTop: 0,
+    marginTop: 18,
     marginBottom: 0,
   },
   welcome: {
@@ -2022,113 +1920,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: 'rgba(39,174,96,0.08)',
   },
-  studentItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: 'rgba(247,250,253,0.92)',
-    borderRadius: 12,
-    marginBottom: 8,
-    elevation: 2,
-    shadowColor: '#27ae60',
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  studentInfo: {
-    flex: 1,
-  },
-  studentNickname: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#222',
-    marginBottom: 2,
-  },
-  studentNumber: {
-    fontSize: 13,
-    color: '#888',
-    fontWeight: '500',
-  },
-  testButtons: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  testButton: {
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    minWidth: 70,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  testButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 12,
-  },
-  preTestButton: {
-    backgroundColor: '#ff5a5a',
-  },
-  postTestButton: {
-    backgroundColor: '#ff9f43',
-  },
-  analyticsCard: {
-    flex: 1,
-    minWidth: 120,
-    maxWidth: 160,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 18,
-    paddingVertical: 8,
-    marginBottom: 16,
-    shadowColor: '#27ae60',
-    shadowOpacity: 0.10,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
-  },
-  analyticsIcon: {
-    marginBottom: 6,
-  },
-  analyticsValue: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#222',
-    marginBottom: 2,
-  },
-  analyticsLabel: {
-    fontSize: 13,
-    color: '#444',
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  actionBtn: {
-    flex: 1,
-    borderRadius: 10,
-    paddingVertical: 6,
-    paddingHorizontal: 0,
-    marginHorizontal: 4,
-    minWidth: 90,
-    maxWidth: 180,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#27ae60',
-    shadowOpacity: 0.10,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  actionBtnText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 15,
-    letterSpacing: 0.2,
-  },
+
   compactCardRow: {
     flexDirection: 'row',
     alignItems: 'center',
