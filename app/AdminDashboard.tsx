@@ -35,6 +35,8 @@ export default function AdminDashboard() {
   const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editTeacher, setEditTeacher] = useState<Teacher | null>(null);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [students, setStudents] = useState<any[]>([]);
 
   const windowWidth = Dimensions.get('window').width;
   const numColumns = windowWidth < 400 ? 1 : windowWidth < 600 ? 2 : 3;
@@ -192,14 +194,31 @@ export default function AdminDashboard() {
     );
   }
 
-  // New improvement distribution data
-  const improvementDistribution = [
-    { label: '0-10%', value: 2, color: '#ffb37b' },
-    { label: '11-25%', value: 5, color: '#ffe066' },
-    { label: '26-50%', value: 8, color: '#7ed957' },
-    { label: '51-75%', value: 4, color: '#27ae60' },
-    { label: '76-100%', value: 1, color: '#0097a7' },
+  // Remove the static improvementDistribution and compute it from real data
+  // Define green color palette for the bars
+  const improvementBins = [
+    { label: '0-10%', min: 0, max: 10, color: '#b9f6ca' },
+    { label: '11-25%', min: 11, max: 25, color: '#69f0ae' },
+    { label: '26-50%', min: 26, max: 50, color: '#00e676' },
+    { label: '51-75%', min: 51, max: 75, color: '#1de9b6' },
+    { label: '76-100%', min: 76, max: 100, color: '#27ae60' },
   ];
+
+  // Compute improvement distribution from students
+  const improvementDistribution: ChartData[] = (() => {
+    // Calculate improvement for each student
+    const improvements = students.map(stu => {
+      const pre = typeof stu.preScore === 'number' ? stu.preScore : (stu.preScore?.pattern ?? 0) + (stu.preScore?.numbers ?? 0);
+      const post = typeof stu.postScore === 'number' ? stu.postScore : (stu.postScore?.pattern ?? 0) + (stu.postScore?.numbers ?? 0);
+      return pre > 0 ? Math.round(((post - pre) / pre) * 100) : 0;
+    }).filter(impr => !isNaN(impr) && isFinite(impr) && impr >= 0);
+    // Bin improvements
+    return improvementBins.map(bin => ({
+      label: bin.label,
+      value: improvements.filter(impr => impr >= bin.min && impr <= bin.max).length,
+      color: bin.color,
+    }));
+  })();
 
   // Load teachers from Realtime Database on mount
   useEffect(() => {
@@ -215,17 +234,88 @@ export default function AdminDashboard() {
     return () => unsubscribe();
   }, []);
 
-  // Remove all references to mockStats and use derived values from teachers
+  // Add useEffect to fetch classes
+  useEffect(() => {
+    const classesRef = ref(db, 'Classes');
+    const unsubscribe = onValue(classesRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        setClasses(Object.values(data));
+      } else {
+        setClasses([]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Add useEffect to fetch students
+  useEffect(() => {
+    const studentsRef = ref(db, 'Students');
+    const unsubscribe = onValue(studentsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        setStudents(Object.values(data));
+      } else {
+        setStudents([]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Replace the stats calculation with real aggregation:
+  const teacherStats = teachers.map(teacher => {
+    const teacherClasses = classes.filter(cls => cls.teacherId === teacher.teacherId);
+    const teacherClassIds = teacherClasses.map(cls => cls.id);
+    const teacherStudents = students.filter(stu => teacherClassIds.includes(stu.classId));
+    // Calculate average improvement for this teacher
+    let avgImprovement = 0;
+    if (teacherStudents.length > 0) {
+      const improvements = teacherStudents.map(stu => {
+        const pre = typeof stu.preScore === 'number' ? stu.preScore : (stu.preScore?.pattern ?? 0) + (stu.preScore?.numbers ?? 0);
+        const post = typeof stu.postScore === 'number' ? stu.postScore : (stu.postScore?.pattern ?? 0) + (stu.postScore?.numbers ?? 0);
+        return pre > 0 ? ((post - pre) / pre) * 100 : 0;
+      });
+      avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
+    }
+    return {
+      ...teacher,
+      numClasses: teacherClasses.length,
+      numStudents: teacherStudents.length,
+      avgImprovement,
+    };
+  });
+
   const stats = {
     totalTeachers: teachers.length,
-    totalClasses: teachers.reduce((sum, t) => sum + (t.numClasses ?? 0), 0),
-    totalStudents: teachers.reduce((sum, t) => sum + (t.numStudents ?? 0), 0),
-    avgPreTest: 5.2, // placeholder, update if you have real data
-    avgPostTest: 7.1, // placeholder, update if you have real data
-    passRate: 82, // placeholder, update if you have real data
-    mostImprovedTeacher: teachers.reduce((a, b) => ((a.avgImprovement ?? 0) > (b.avgImprovement ?? 0) ? a : b), teachers[0] || {}),
-    activeTeachers: teachers.length - 1, // placeholder
-    inactiveTeachers: 1, // placeholder
+    totalClasses: classes.length,
+    totalStudents: students.length,
+    avgImprovement: (() => {
+      const improvements = students.map(stu => {
+        const pre = typeof stu.preScore === 'number' ? stu.preScore : (stu.preScore?.pattern ?? 0) + (stu.preScore?.numbers ?? 0);
+        const post = typeof stu.postScore === 'number' ? stu.postScore : (stu.postScore?.pattern ?? 0) + (stu.postScore?.numbers ?? 0);
+        return pre > 0 ? ((post - pre) / pre) * 100 : 0;
+      });
+      return improvements.length > 0 ? Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length) : 0;
+    })(),
+    avgPreTest: (() => {
+      const preScores = students.map(stu => typeof stu.preScore === 'number' ? stu.preScore : (stu.preScore?.pattern ?? 0) + (stu.preScore?.numbers ?? 0));
+      return preScores.length > 0 ? (preScores.reduce((a, b) => a + b, 0) / preScores.length).toFixed(1) : 0;
+    })(),
+    avgPostTest: (() => {
+      const postScores = students.map(stu => typeof stu.postScore === 'number' ? stu.postScore : (stu.postScore?.pattern ?? 0) + (stu.postScore?.numbers ?? 0));
+      return postScores.length > 0 ? (postScores.reduce((a, b) => a + b, 0) / postScores.length).toFixed(1) : 0;
+    })(),
+    passRate: (() => {
+      // Example: pass if postScore >= 7
+      const passed = students.filter(stu => {
+        const post = typeof stu.postScore === 'number' ? stu.postScore : (stu.postScore?.pattern ?? 0) + (stu.postScore?.numbers ?? 0);
+        return post >= 7;
+      });
+      return students.length > 0 ? Math.round((passed.length / students.length) * 100) : 0;
+    })(),
+    mostImprovedTeacher: teacherStats.reduce((a, b) => ((a.avgImprovement ?? 0) > (b.avgImprovement ?? 0) ? a : b), teacherStats[0] || {}),
+    activeTeachers: teacherStats.length, // Placeholder, can be improved
+    inactiveTeachers: 0, // Placeholder, can be improved
   };
 
   return (
@@ -304,7 +394,7 @@ export default function AdminDashboard() {
               </View>
             </View>
           }
-          data={teachers}
+          data={teacherStats}
           keyExtractor={(item, index) => item.accountId || item.teacherId || String(index)}
           numColumns={2}
           columnWrapperStyle={{ justifyContent: 'flex-start' }}

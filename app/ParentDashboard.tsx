@@ -179,6 +179,13 @@ export default function ParentDashboard() {
   const [studentData, setStudentData] = useState<any>(null);
   const [setupIncome, setSetupIncome] = useState('');
   const [incomeDropdownVisible, setIncomeDropdownVisible] = useState(false);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [ratingModalVisible, setRatingModalVisible] = useState(false);
+  const [ratingType, setRatingType] = useState<'pre' | 'post' | null>(null);
+  const [ratingTaskIdx, setRatingTaskIdx] = useState<number | null>(null);
+  const [selectedRating, setSelectedRating] = useState<number>(0);
+  const [pretestNotDone, setPretestNotDone] = useState(false);
+  const [tasksLoading, setTasksLoading] = useState(false);
 
   React.useEffect(() => {
     if (!parentId) return;
@@ -236,36 +243,107 @@ export default function ParentDashboard() {
 
   // Fetch student data when parentData.studentId is available
   useEffect(() => {
-    if (parentData?.studentId) {
-      const fetchStudent = async () => {
+    if (parentData?.studentId && parentData?.parentId) {
+      const fetchStudentAndTasks = async () => {
         const snap = await get(ref(db, `Students/${parentData.studentId}`));
         if (snap.exists()) {
           const student = snap.val();
           setStudentData(student);
-          
-          // Generate task recommendations if pretest scores exist
-          if (student?.preScore?.pattern !== undefined && student?.preScore?.numbers !== undefined) {
-            const patternScore = student.preScore.pattern || 0;
-            const numbersScore = student.preScore.numbers || 0;
-            const incomeBracket = parentData?.householdIncome || incomeBrackets[0];
-            
-            // Only generate tasks if there are actual scores (not just zeros)
-            if (patternScore > 0 || numbersScore > 0) {
-              const recommendations = generateTaskRecommendations(patternScore, numbersScore, incomeBracket);
-              console.log('Generated tasks:', recommendations.length, 'for scores:', patternScore, numbersScore, 'income:', incomeBracket);
-              setTasks(recommendations);
-            } else {
-              console.log('No tasks generated - no scores available');
-              setTasks([]); // No tasks if no scores
-            }
+
+          const patternScore = student?.preScore?.pattern ?? 0;
+          const numbersScore = student?.preScore?.numbers ?? 0;
+          const incomeBracket = parentData?.householdIncome || incomeBrackets[0];
+
+          // Map income bracket string to number for API
+          const incomeMap: { [key: string]: number } = {
+            '₱10,000 and below': 1,
+            '₱10,001–15,000': 2,
+            '₱15,001–20,000': 3,
+            '₱20,001–25,000': 4,
+            '₱25,001 and above': 5,
+          };
+          const incomeBracketValue = incomeMap[incomeBracket] || 1;
+
+          if (patternScore === 0 && numbersScore === 0) {
+            setPretestNotDone(true);
+            setTasks([]);
+            return;
           } else {
-            setTasks([]); // No tasks if no scores
+            setPretestNotDone(false);
+          }
+
+          // Check if tasks exist in DB under the parent
+          const parentTasksRef = ref(db, `Parents/${parentData.parentId}/tasks`);
+          const tasksSnap = await get(parentTasksRef);
+          if (tasksSnap.exists()) {
+            let loadedTasks = tasksSnap.val();
+            // If loadedTasks is an object (from Firebase), convert to array
+            if (!Array.isArray(loadedTasks)) {
+              loadedTasks = Object.values(loadedTasks);
+            }
+            // Map fields for UI
+            loadedTasks = loadedTasks.map((t: any) => ({
+              title: t.title || t.task_title || '',
+              details: t.details || t.task_details || '',
+              objective: t.objective || t.task_objective || '',
+              preRating: t.preRating ?? null,
+              postRating: t.postRating ?? null,
+              status: t.status ||
+                (t.preRating == null ? 'notdone' : (t.postRating == null ? 'ongoing' : 'done')),
+            }));
+            setTasks(loadedTasks);
+          } else {
+            // No tasks, generate via API
+            setTasksLoading(true);
+            try {
+              const response = await fetch('https://mathtatag-api.onrender.com/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  pattern_score: patternScore,
+                  subtraction_score: numbersScore,
+                  income_bracket: incomeBracketValue
+                }),
+              });
+
+              const rawText = await response.text();
+              let result: any = null;
+              try {
+                result = JSON.parse(rawText);
+              } catch (jsonErr) {
+                console.error('API did not return JSON:', rawText);
+                throw new Error('API did not return valid JSON. Response: ' + rawText);
+              }
+
+              if (!response.ok) {
+                console.error('API error response:', result);
+                throw new Error(result?.error || 'Unknown error');
+              }
+
+              console.log('API result:', result);
+              let tasksToSave = Array.isArray(result.tasks) ? result.tasks : Array.isArray(result) ? result : [];
+              tasksToSave = tasksToSave.map((t: any) => ({
+                title: t.task_title || t.title || '',
+                details: t.task_details || t.details || '',
+                objective: t.task_objective || t.objective || '',
+                preRating: null,
+                postRating: null,
+                status: 'notdone',
+              }));
+              await set(parentTasksRef, tasksToSave);
+              setTasks(tasksToSave);
+            } catch (err: any) {
+              console.error('Failed to assign tasks:', err);
+              Alert.alert('Error', err.message || 'Failed to assign tasks. Please try again.');
+              setTasks([]);
+            }
+            setTasksLoading(false);
           }
         }
       };
-      fetchStudent();
+      fetchStudentAndTasks();
     }
-  }, [parentData?.studentId, parentData?.householdIncome]);
+  }, [parentData?.studentId, parentData?.householdIncome, parentData?.parentId]);
 
   const handleSetupSubmit = async () => {
     if (!setupName.trim() || !setupContact.trim()) {
@@ -300,7 +378,6 @@ export default function ParentDashboard() {
   };
   const pretest = { percent: 35, score: 3, total: 10 };
   const posttest = { percent: 0, score: 0, total: 10 };
-  const [tasks, setTasks] = useState<any[]>([]);
 
   // Calculate overall progress
   const doneCount = tasks.filter(t => t.status === 'done').length;
@@ -313,42 +390,38 @@ export default function ParentDashboard() {
     return 'Not Done';
   };
 
+  // Star rating component
+  const StarRating = ({ rating, onSelect }: { rating: number, onSelect: (n: number) => void }) => (
+    <View style={{ flexDirection: 'row', justifyContent: 'center', marginVertical: 8 }}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <TouchableOpacity key={n} onPress={() => onSelect(n)}>
+          <MaterialIcons
+            name={n <= rating ? 'star' : 'star-border'}
+            size={32}
+            color={n <= rating ? '#FFD600' : '#bbb'}
+            style={{ marginHorizontal: 2 }}
+          />
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
   // Handle task click
   const handleTaskPress = (idx: number) => {
     const task = tasks[idx];
     if (task.status === 'done') return;
     if (task.status === 'notdone') {
-      Alert.alert(
-        'Start Task',
-        `Mark "${task.title}" as Ongoing?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Yes',
-            onPress: () => {
-              const newTasks = [...tasks];
-              newTasks[idx] = { ...newTasks[idx], status: 'ongoing' };
-              setTasks(newTasks);
-            },
-          },
-        ]
-      );
+      // Show pre-rating modal
+      setRatingType('pre');
+      setRatingTaskIdx(idx);
+      setSelectedRating(task.preRating || 0);
+      setRatingModalVisible(true);
     } else if (task.status === 'ongoing') {
-      Alert.alert(
-        'Finish Task',
-        `Mark "${task.title}" as Done?`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Yes',
-            onPress: () => {
-              const newTasks = [...tasks];
-              newTasks[idx] = { ...newTasks[idx], status: 'done' };
-              setTasks(newTasks);
-            },
-          },
-        ]
-      );
+      // Show post-rating modal
+      setRatingType('post');
+      setRatingTaskIdx(idx);
+      setSelectedRating(task.postRating || 0);
+      setRatingModalVisible(true);
     }
   };
 
@@ -404,6 +477,22 @@ export default function ParentDashboard() {
     Alert.alert('Change Requested', `Reason: ${reason}`);
   };
 
+  // Handle rating modal submit
+  const handleSubmitRating = () => {
+    if (ratingTaskIdx === null || !ratingType) return;
+    const newTasks = [...tasks];
+    if (ratingType === 'pre') {
+      newTasks[ratingTaskIdx] = { ...newTasks[ratingTaskIdx], status: 'ongoing', preRating: selectedRating };
+    } else if (ratingType === 'post') {
+      newTasks[ratingTaskIdx] = { ...newTasks[ratingTaskIdx], status: 'done', postRating: selectedRating };
+    }
+    setTasks(newTasks);
+    setRatingModalVisible(false);
+    setRatingTaskIdx(null);
+    setRatingType(null);
+    setSelectedRating(0);
+  };
+
   // In the announcement modal and list, format date and time
   function formatDateTime(iso: string) {
     if (!iso) return '';
@@ -432,6 +521,13 @@ export default function ParentDashboard() {
   const postNumbers = studentData?.postScore?.numbers ?? 0;
   const postScore = postPattern + postNumbers;
   const postStatus = getStatusFromScore(postScore, 20, postPattern, postNumbers);
+
+  // Helper to render stars
+  const renderStars = (count: number) => {
+    return Array.from({ length: 5 }, (_, i) =>
+      <Text key={i} style={{ color: '#FFD600', fontSize: 15, marginRight: 1 }}>{i < count ? '★' : '☆'}</Text>
+    );
+  };
 
   return (
     <ImageBackground source={bgImage} style={styles.bg} imageStyle={{ opacity: 0.13, resizeMode: 'cover' }}>
@@ -552,8 +648,20 @@ export default function ParentDashboard() {
             <Text style={styles.generalProgressText}>{`${progressPercent}%`}</Text>
           </View>
           {/* Scrollable tasks list */}
-          {tasks.length === 0 ? (
-            <View style={[styles.taskRow, { justifyContent: 'center', alignItems: 'center', paddingVertical: 20 }]}>
+          {pretestNotDone ? (
+            <View style={[styles.taskRow, { justifyContent: 'center', alignItems: 'center', paddingVertical: 20 }]}> 
+              <Text style={{ fontSize: 16, color: '#888', textAlign: 'center' }}>
+                Tasks will load after your child completes the pretest.
+              </Text>
+            </View>
+          ) : tasksLoading ? (
+            <View style={[styles.taskRow, { justifyContent: 'center', alignItems: 'center', paddingVertical: 20 }]}> 
+              <Text style={{ fontSize: 16, color: '#888', textAlign: 'center' }}>
+                Assigning tasks...
+              </Text>
+            </View>
+          ) : tasks.length === 0 ? (
+            <View style={[styles.taskRow, { justifyContent: 'center', alignItems: 'center', paddingVertical: 20 }]}> 
               <Text style={{ fontSize: 16, color: '#888', textAlign: 'center' }}>
                 No tasks available yet.{'\n'}
                 <Text style={{ fontSize: 14, color: '#aaa' }}>
@@ -606,6 +714,23 @@ export default function ParentDashboard() {
                 </View>
                 {!!item.details && (
                   <Text style={styles.taskDetails}>{item.details}</Text>
+                )}
+                {/* Show ratings if available, both in one row with spacing */}
+                {(item.preRating || item.postRating) && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                    {item.preRating && (
+                      <>
+                        <Text style={{ fontSize: 13, color: '#888', marginRight: 2 }}>Simula:</Text>
+                        {renderStars(item.preRating)}
+                      </>
+                    )}
+                    {item.postRating && (
+                      <>
+                        <Text style={{ fontSize: 13, color: '#888', marginLeft: 16, marginRight: 2 }}>Matapos:</Text>
+                        {renderStars(item.postRating)}
+                      </>
+                    )}
+                  </View>
                 )}
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -694,6 +819,61 @@ export default function ParentDashboard() {
                 </Pressable>
                 <Pressable style={[styles.modalCloseBtn, { marginTop: 8, backgroundColor: '#bbb' }]} onPress={() => setChangeModalVisible(false)}>
                   <Text style={styles.modalCloseBtnText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </View>
+          </BlurView>
+        </Modal>
+
+        {/* Rating Modal */}
+        <Modal
+          visible={ratingModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setRatingModalVisible(false)}
+        >
+          <BlurView intensity={60} tint="light" style={styles.modalBlur}>
+            <View style={styles.modalCenterWrap}>
+              <View style={[
+                styles.modalAnnouncementBox,
+                {
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'relative',
+                  paddingVertical: 32,
+                  paddingHorizontal: 24,
+                  minWidth: 280,
+                },
+              ]}>
+                {/* X icon at top right */}
+                <TouchableOpacity
+                  style={{ position: 'absolute', top: 14, right: 14, zIndex: 10 }}
+                  onPress={() => setRatingModalVisible(false)}
+                >
+                  <MaterialIcons name="close" size={35} color="#888" />
+                </TouchableOpacity>
+                <Text style={{ fontWeight: 'bold', fontSize: 18, marginTop: 18, marginBottom: 8, textAlign: 'center', lineHeight: 24 }}>
+                  I-rate ang kasalukuyang kaalaman ng iyong anak sa gawaing ito
+                </Text>
+                {/* Star rating selection */}
+                <View style={{ flexDirection: 'row', justifyContent: 'center', marginVertical: 8, marginBottom: 12 }}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <TouchableOpacity key={n} onPress={() => setSelectedRating(n)}>
+                      <MaterialIcons
+                        name={n <= selectedRating ? 'star' : 'star-border'}
+                        size={38}
+                        color={n <= selectedRating ? '#FFD600' : '#bbb'}
+                        style={{ marginHorizontal: 6 }}
+                      />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Pressable
+                  style={[styles.modalCloseBtn, { marginTop: 8, backgroundColor: '#2ecc40', width: 140, alignSelf: 'center', borderRadius: 20 }]}
+                  onPress={handleSubmitRating}
+                  disabled={!selectedRating}
+                >
+                  <Text style={styles.modalCloseBtnText}>Submit</Text>
                 </Pressable>
               </View>
             </View>
@@ -1170,8 +1350,10 @@ const styles = StyleSheet.create({
   },
   modalCloseBtnText: {
     color: '#fff',
+    alignSelf: 'center',
     fontWeight: 'bold',
-    fontSize: 15,
+    fontSize: 18,
+    
   },
   changeBtn: {
     marginLeft: 10,
