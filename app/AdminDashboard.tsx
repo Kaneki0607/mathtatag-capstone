@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { get, onValue, ref, remove, set, update } from 'firebase/database';
 import React, { useEffect, useState } from 'react';
-import { Alert, Dimensions, FlatList, ImageBackground, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
+import { Alert, Dimensions, FlatList, ImageBackground, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { G, Path, Svg } from 'react-native-svg';
 import { auth, db } from '../constants/firebaseConfig';
@@ -133,8 +133,7 @@ export default function AdminDashboard() {
       await set(ref(db, `Teachers/${teacherUid}`), teacherData);
       // 4. Add UID to Roles/Teacher
       await update(ref(db, 'Roles'), { [`Teacher/${teacherUid}`]: true });
-      // 5. Update local state
-      setTeachers(prev => [...prev, teacherData]);
+      // 5. DO NOT update local state here! (Removed setTeachers to prevent duplicates)
       Alert.alert('Success', `${newTeacher.name} has been registered as a teacher.`);
       setNewTeacher({ name: '', email: '', contact: '', school: '', password: '', accountId: '', teacherId: '' });
     } catch (error: any) {
@@ -298,36 +297,64 @@ export default function AdminDashboard() {
   const teacherStats = teachers.map(teacher => {
     const teacherClasses = classes.filter(cls => cls.teacherId === teacher.teacherId);
     const teacherClassIds = teacherClasses.map(cls => cls.id);
-    const teacherStudents = students.filter(stu => teacherClassIds.includes(stu.classId));
+    // Only students with a valid post test
+    const teacherStudents = students.filter(
+      stu => teacherClassIds.includes(stu.classId) &&
+        stu.postScore && (
+          (typeof stu.postScore === 'number' && !isNaN(stu.postScore))
+          || (typeof stu.postScore === 'object' && (typeof stu.postScore.pattern === 'number' || typeof stu.postScore.numbers === 'number'))
+        )
+    );
     // Calculate average improvement for this teacher
     let avgImprovement = 0;
+    let improvements: number[] = [];
     if (teacherStudents.length > 0) {
-      const improvements = teacherStudents.map(stu => {
+      improvements = teacherStudents.map(stu => {
         const pre = typeof stu.preScore === 'number' ? stu.preScore : (stu.preScore?.pattern ?? 0) + (stu.preScore?.numbers ?? 0);
         const post = typeof stu.postScore === 'number' ? stu.postScore : (stu.postScore?.pattern ?? 0) + (stu.postScore?.numbers ?? 0);
         return pre > 0 ? ((post - pre) / pre) * 100 : 0;
       });
       avgImprovement = Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length);
     }
+    // Log for each teacher
+    console.log(`Teacher: ${teacher.name}, Students with post test: ${teacherStudents.length}, Improvements: ${JSON.stringify(improvements)}, Avg: ${avgImprovement}`);
     return {
       ...teacher,
       numClasses: teacherClasses.length,
       numStudents: teacherStudents.length,
       avgImprovement,
+      hasActiveStudents: teacherStudents.length > 0,
     };
   });
+
+  // For dashboard stats, only include teachers with at least one student with a valid post test
+  const activeTeacherStats = teacherStats.filter(t => t.hasActiveStudents);
+
+  // Deduplicate teacherStats by accountId for rendering
+  const uniqueTeacherStats = teacherStats.filter(
+    (teacher, index, self) =>
+      index === self.findIndex(t => t.accountId === teacher.accountId)
+  );
 
   const stats = {
     totalTeachers: teachers.length,
     totalClasses: classes.length,
     totalStudents: students.length,
     avgImprovement: (() => {
-      const improvements = students.map(stu => {
-        const pre = typeof stu.preScore === 'number' ? stu.preScore : (stu.preScore?.pattern ?? 0) + (stu.preScore?.numbers ?? 0);
-        const post = typeof stu.postScore === 'number' ? stu.postScore : (stu.postScore?.pattern ?? 0) + (stu.postScore?.numbers ?? 0);
-        return pre > 0 ? ((post - pre) / pre) * 100 : 0;
-      });
-      return improvements.length > 0 ? Math.round(improvements.reduce((a, b) => a + b, 0) / improvements.length) : 0;
+      if (activeTeacherStats.length === 0) return 0;
+      const avg = Math.round(
+        activeTeacherStats.reduce((a, b) => a + (b.avgImprovement ?? 0), 0) / activeTeacherStats.length
+      );
+      // Log for dashboard
+      console.log(
+        'Dashboard avgImprovement computation:',
+        activeTeacherStats.map(t => ({
+          name: t.name,
+          avgImprovement: t.avgImprovement
+        })),
+        'Dashboard avg:', avg
+      );
+      return avg;
     })(),
     avgPreTest: (() => {
       const preScores = students.map(stu => typeof stu.preScore === 'number' ? stu.preScore : (stu.preScore?.pattern ?? 0) + (stu.preScore?.numbers ?? 0));
@@ -345,9 +372,9 @@ export default function AdminDashboard() {
       });
       return students.length > 0 ? Math.round((passed.length / students.length) * 100) : 0;
     })(),
-    mostImprovedTeacher: teacherStats.reduce((a, b) => ((a.avgImprovement ?? 0) > (b.avgImprovement ?? 0) ? a : b), teacherStats[0] || {}),
-    activeTeachers: teacherStats.length, // Placeholder, can be improved
-    inactiveTeachers: 0, // Placeholder, can be improved
+    mostImprovedTeacher: activeTeacherStats.reduce((a, b) => ((a.avgImprovement ?? 0) > (b.avgImprovement ?? 0) ? a : b), activeTeacherStats[0] || {}),
+    activeTeachers: activeTeacherStats.length,
+    inactiveTeachers: teacherStats.length - activeTeacherStats.length,
   };
 
   return (
@@ -420,7 +447,7 @@ export default function AdminDashboard() {
               </View>
             </View>
           }
-          data={teacherStats}
+          data={uniqueTeacherStats}
           keyExtractor={(item, index) => item.accountId || item.teacherId || String(index)}
           numColumns={2}
           columnWrapperStyle={{ justifyContent: 'flex-start' }}
@@ -631,29 +658,25 @@ export default function AdminDashboard() {
         </Modal>
         {/* Profile Menu Modal */}
         <Modal visible={showProfileMenu} transparent animationType="fade" onRequestClose={() => setShowProfileMenu(false)}>
-          <TouchableWithoutFeedback onPress={() => setShowProfileMenu(false)}>
-            <View style={{ flex: 1, justifyContent: 'flex-start', alignItems: 'flex-end', paddingTop: 180, paddingRight: 50, backgroundColor: 'rgba(0,0,0,0.08)' }}>
-              <TouchableWithoutFeedback onPress={() => {}}>
-                <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 8, shadowColor: '#27ae60', shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 4, minWidth: 105 }}>
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
-                    onPress={async () => {
-                      setShowProfileMenu(false);
-                      try {
-                        await auth.signOut();
-                        router.replace('/RoleSelection');
-                      } catch (e) {
-                        Alert.alert('Logout Failed', 'Could not log out.');
-                      }
-                    }}
-                  >
-                    <MaterialCommunityIcons name="logout" size={20} color="#27ae60" style={{ marginRight: 8 }} />
-                    <Text style={{ color: '#27ae60', fontWeight: 'bold', fontSize: 16 }}>Logout</Text>
-                  </TouchableOpacity>
-                </View>
-              </TouchableWithoutFeedback>
+          <View style={{ flex: 1, justifyContent: 'flex-start', alignItems: 'flex-end', paddingTop: 180, paddingRight: 50, backgroundColor: 'rgba(0,0,0,0.08)' }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 8, shadowColor: '#27ae60', shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 4, minWidth: 105 }}>
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
+                onPress={async () => {
+                  setShowProfileMenu(false);
+                  try {
+                    await auth.signOut();
+                    router.replace('/RoleSelection');
+                  } catch (e) {
+                    Alert.alert('Logout Failed', 'Could not log out.');
+                  }
+                }}
+              >
+                <MaterialCommunityIcons name="logout" size={20} color="#27ae60" style={{ marginRight: 8 }} />
+                <Text style={{ color: '#27ae60', fontWeight: 'bold', fontSize: 16 }}>Logout</Text>
+              </TouchableOpacity>
             </View>
-          </TouchableWithoutFeedback>
+          </View>
         </Modal>
       </SafeAreaView>
     </ImageBackground>
