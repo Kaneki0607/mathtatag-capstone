@@ -83,7 +83,6 @@ export default function TeacherDashboard() {
   const [modalType, setModalType] = useState<ModalType>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [classSection, setClassSection] = useState('');
-  const [classSchool, setClassSchool] = useState('');
   const [studentNickname, setStudentNickname] = useState('');
   const [announceText, setAnnounceText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -205,7 +204,8 @@ export default function TeacherDashboard() {
     const hasPost = s.postScore && typeof s.postScore.pattern === 'number' && typeof s.postScore.numbers === 'number';
     const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
     const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
-    return hasPre && hasPost && pre > 0 && post >= 0;
+    // Only include if both pre and post exist and pre > 0 and post > 0
+    return hasPre && hasPost && pre > 0 && post > 0;
   }));
   const avgPerformance = allPerformance.length ? Math.round(allPerformance.reduce((a, b) => a + b, 0) / allPerformance.length) : 0;
   let dashboardAvgImprovement = 0;
@@ -282,7 +282,6 @@ export default function TeacherDashboard() {
     setModalVisible(false);
     setModalType(null);
     setClassSection('');
-    setClassSchool('');
     setStudentNickname('');
     setAnnounceText('');
     setAnnounceTitle('');
@@ -305,37 +304,21 @@ export default function TeacherDashboard() {
     }
 
     try {
-      // Generate school abbreviation for readable class ID
-      const schoolName = classSchool.trim() || 'Unknown School';
+      // Use the teacher's school from the Teachers table
+      const schoolName = currentTeacher.school || 'Unknown School';
       const schoolAbbreviation = schoolName.split(' ').map((word: string) => word.charAt(0)).join('') + 'ES';
       const currentYear = new Date().getFullYear();
-      
       // Generate readable class ID: SCHOOLABBR-SECTION-YEAR
       const readableClassId = `${schoolAbbreviation.toUpperCase()}-${classSection.trim().toUpperCase()}-${currentYear}`;
-      
       const newClass: ClassData = {
         id: readableClassId,
         school: schoolName,
         section: classSection.trim(),
         teacherId: currentTeacher.teacherId,
         studentIds: [],
-        students: [],
-        tasks: [
-          { title: 'Intervention', details: 'Remedial activities for struggling students', status: 'pending' },
-          { title: 'Consolidation', details: 'Group activities to reinforce learning', status: 'pending' },
-          { title: 'Enhancement', details: 'Advanced activities for proficient students', status: 'pending' },
-          { title: 'Proficient', details: 'Challenging tasks for high performers', status: 'pending' },
-          { title: 'Highly Proficient', details: 'Excellence-focused activities', status: 'pending' },
-        ],
-        learnersPerformance: [
-          { label: 'Intervention', color: '#ff5a5a', percent: 0 },
-          { label: 'Consolidation', color: '#ffb37b', percent: 0 },
-          { label: 'Enhancement', color: '#ffe066', percent: 0 },
-          { label: 'Proficient', color: '#7ed957', percent: 0 },
-          { label: 'Highly Proficient', color: '#27ae60', percent: 0 },
-        ],
+        tasks: [],
+        learnersPerformance: [],
       };
-
       await set(ref(db, `Classes/${readableClassId}`), newClass);
       Alert.alert('Success', `Class created successfully!\n\nClass ID: ${readableClassId}`);
       closeModal();
@@ -705,10 +688,10 @@ export default function TeacherDashboard() {
     const studentsWithBoth = (cls.students ?? []).filter(s => {
       const hasPre = s.preScore && typeof s.preScore.pattern === 'number' && typeof s.preScore.numbers === 'number';
       const hasPost = s.postScore && typeof s.postScore.pattern === 'number' && typeof s.postScore.numbers === 'number';
-      // Only include if both pre and post exist and pre > 0
       const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
       const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
-      return hasPre && hasPost && pre > 0 && post >= 0;
+      // Only include if both pre and post exist and pre > 0 and post > 0
+      return hasPre && hasPost && pre > 0 && post > 0;
     });
     let avgImprovement = 0;
     let avgPost = 0;
@@ -729,7 +712,7 @@ export default function TeacherDashboard() {
         <View style={{ padding: isSmall ? 16 : 24, paddingBottom: isSmall ? 0 : 8 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: isSmall ? 9 : 8 }}>
                 <View>
-              <Text style={{ fontSize: 12, color: '#888', fontWeight: '700', marginBottom: -3 }}>{cls.school}</Text>
+              <Text style={{ fontSize: 12, color: '#888', fontWeight: '700', marginBottom: -3 }}>Section</Text>
               <Text style={{ fontSize: 35, color: '#27ae60', fontWeight: 'bold', letterSpacing: 1 }}>{cls.section}</Text>
           </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginBottom: isSmall ? 10 : 18, gap: 6, flexWrap: 'wrap', alignSelf: 'flex-end' }}>
@@ -814,12 +797,6 @@ export default function TeacherDashboard() {
               placeholder="Section (e.g. JDC)"
               value={classSection}
               onChangeText={setClassSection}
-            />
-            <TextInput
-              style={styles.modalInput}
-              placeholder="School"
-              value={classSchool}
-              onChangeText={setClassSchool}
             />
             <View style={styles.modalBtnRow}>
               <Pressable style={styles.modalBtn} onPress={closeModal}><Text style={styles.modalBtnText}>Cancel</Text></Pressable>
@@ -961,10 +938,10 @@ export default function TeacherDashboard() {
         const studentsWithBoth = (cls.students ?? []).filter(s => {
           const hasPre = s.preScore && typeof s.preScore.pattern === 'number' && typeof s.preScore.numbers === 'number';
           const hasPost = s.postScore && typeof s.postScore.pattern === 'number' && typeof s.postScore.numbers === 'number';
-          // Only include if both pre and post exist and pre > 0
           const pre = (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0);
           const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
-          return hasPre && hasPost && pre > 0 && post >= 0;
+          // Only include if both pre and post exist and pre > 0 and post > 0
+          return hasPre && hasPost && pre > 0 && post > 0;
         });
         let avgImprovement = 0;
         let avgPost = 0;

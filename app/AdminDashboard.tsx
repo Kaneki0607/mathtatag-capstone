@@ -126,9 +126,7 @@ export default function AdminDashboard() {
         email: newTeacher.email,
         contact: newTeacher.contact,
         school: newTeacher.school,
-        numClasses: newTeacher.numClasses ?? 0,
-        numStudents: newTeacher.numStudents ?? 0,
-        avgImprovement: newTeacher.avgImprovement ?? 0,
+        // avgImprovement, numClasses, and numStudents removed for normalization
       };
       await set(ref(db, `Teachers/${teacherUid}`), teacherData);
       // 4. Add UID to Roles/Teacher
@@ -471,7 +469,7 @@ export default function AdminDashboard() {
               <View style={styles.teacherCardStats}>
                 <View style={styles.teacherStatItem}>
                   <MaterialCommunityIcons name="account-group" size={16} color="#27ae60" />
-                  <Text style={styles.teacherStatValue}>{(item.numStudents ?? 0).toString().padStart(1,'0')}</Text>
+                  <Text style={styles.teacherStatValue}>{(item.numStudents).toString().padStart(1,'0')}</Text>
                   <Text
                     style={[styles.teacherStatLabel, { maxWidth: 90, textAlign: 'center' }]}
                     numberOfLines={1}
@@ -482,7 +480,7 @@ export default function AdminDashboard() {
                 </View>
                 <View style={styles.teacherStatItem}>
                   <MaterialCommunityIcons name="google-classroom" size={16} color="#27ae60" />
-                  <Text style={styles.teacherStatValue}>{(item.numClasses ?? 0).toString().padStart(1,'0')}</Text>
+                  <Text style={styles.teacherStatValue}>{(item.numClasses).toString().padStart(1,'0')}</Text>
                   <Text
                     style={[styles.teacherStatLabel, { maxWidth: 90, textAlign: 'center' }]}
                     numberOfLines={1}
@@ -503,7 +501,7 @@ export default function AdminDashboard() {
                       { color: item.avgImprovement > 0 ? '#27ae60' : item.avgImprovement < 0 ? '#ff5a5a' : '#ffe066' },
                     ]}
                   >
-                    {(item.avgImprovement ?? 0) > 0 ? '+' : ''}{item.avgImprovement ?? 0}%
+                    {(item.avgImprovement) > 0 ? '+' : ''}{item.avgImprovement}%
                   </Text>
                   <Text
                     style={[styles.teacherStatLabel, { maxWidth: 90, textAlign: 'center' }]}
@@ -603,9 +601,9 @@ export default function AdminDashboard() {
                         { label: 'Classes', value: editTeacher.numClasses ?? 0, icon: 'google-classroom', color: '#27ae60' },
                         { label: 'Students', value: editTeacher.numStudents ?? 0, icon: 'account-group', color: '#27ae60' },
                         { label: 'Avg. Improvement', value: (editTeacher.avgImprovement ?? 0) > 0
-                          ? `+${editTeacher.avgImprovement}%`
+                          ? `+${editTeacher.avgImprovement ?? 0}%`
                           : (editTeacher.avgImprovement ?? 0) < 0
-                            ? `${editTeacher.avgImprovement}%`
+                            ? `${editTeacher.avgImprovement ?? 0}%`
                             : '0%', icon: 'trending-up', color: (editTeacher.avgImprovement ?? 0) > 0 ? '#27ae60' : (editTeacher.avgImprovement ?? 0) < 0 ? '#ff5a5a' : '#ffe066' }
                       ].map((stat, idx) => (
                         <View key={stat.label + '-' + idx} style={styles.teacherStatCard}>

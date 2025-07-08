@@ -290,6 +290,7 @@ export default function ParentDashboard() {
               postRating: t.postRating ?? null,
               status: t.status ||
                 (t.preRating == null ? 'notdone' : (t.postRating == null ? 'ongoing' : 'done')),
+              assessmentScore: t.assessmentScore || { Preassessment: null, Postassessment: null },
             }));
             setTasks(loadedTasks);
           } else {
@@ -329,6 +330,10 @@ export default function ParentDashboard() {
                 preRating: null,
                 postRating: null,
                 status: 'notdone',
+                assessmentScore: {
+                  Preassessment: null,
+                  Postassessment: null,
+                },
               }));
               await set(parentTasksRef, tasksToSave);
               setTasks(tasksToSave);
@@ -478,15 +483,38 @@ export default function ParentDashboard() {
   };
 
   // Handle rating modal submit
-  const handleSubmitRating = () => {
+  const handleSubmitRating = async () => {
     if (ratingTaskIdx === null || !ratingType) return;
     const newTasks = [...tasks];
     if (ratingType === 'pre') {
-      newTasks[ratingTaskIdx] = { ...newTasks[ratingTaskIdx], status: 'ongoing', preRating: selectedRating };
+      newTasks[ratingTaskIdx] = {
+        ...newTasks[ratingTaskIdx],
+        status: 'ongoing',
+        preRating: selectedRating,
+        assessmentScore: {
+          ...(newTasks[ratingTaskIdx].assessmentScore || {}),
+          Preassessment: selectedRating,
+          Postassessment: newTasks[ratingTaskIdx].assessmentScore?.Postassessment ?? null,
+        },
+      };
     } else if (ratingType === 'post') {
-      newTasks[ratingTaskIdx] = { ...newTasks[ratingTaskIdx], status: 'done', postRating: selectedRating };
+      newTasks[ratingTaskIdx] = {
+        ...newTasks[ratingTaskIdx],
+        status: 'done',
+        postRating: selectedRating,
+        assessmentScore: {
+          ...(newTasks[ratingTaskIdx].assessmentScore || {}),
+          Preassessment: newTasks[ratingTaskIdx].assessmentScore?.Preassessment ?? null,
+          Postassessment: selectedRating,
+        },
+      };
     }
     setTasks(newTasks);
+    // Save to Firebase
+    if (parentData?.parentId) {
+      const parentTasksRef = ref(db, `Parents/${parentData.parentId}/tasks`);
+      await set(parentTasksRef, newTasks);
+    }
     setRatingModalVisible(false);
     setRatingTaskIdx(null);
     setRatingType(null);
@@ -671,53 +699,56 @@ export default function ParentDashboard() {
             </View>
           ) : (
             tasks.map((item, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.taskRow}
-              onPress={() => handleTaskPress(index)}
-              activeOpacity={item.status === 'done' ? 1 : 0.8}
-            >
-              <View style={{ flex: 1 }}>
-                <View style={styles.taskTitleRow}>
-                  <View style={[styles.taskNum, item.status === 'done' ? styles.taskNumDone : styles.taskNumGray]}>
-                    <Text style={[styles.taskNumText, item.status === 'done' ? styles.taskNumTextDone : styles.taskNumTextGray]}>{index + 1}</Text>
+              <View
+                key={index}
+                style={[
+                  styles.taskCard,
+                  item.status === 'done' ? styles.taskCardDone : item.status === 'ongoing' ? styles.taskCardOngoing : styles.taskCardNotDone,
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <View style={[
+                    styles.taskNum,
+                    item.status === 'done' ? styles.taskNumDone : styles.taskNumGray,
+                  ]}>
+                    <Text style={[
+                      styles.taskNumText,
+                      item.status === 'done' ? styles.taskNumTextDone : styles.taskNumTextGray,
+                    ]}>{index + 1}</Text>
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.taskTitleSmall}>{item.title}</Text>
-                    {item.category && (
-                      <View style={{ 
-                        backgroundColor: item.category === 'pattern' ? '#e3f2fd' : 
-                                     item.category === 'numbers' ? '#f3e5f5' : 
-                                     item.category === 'technology' ? '#e8f5e8' : 
-                                     item.category === 'practical' ? '#fff3e0' : 
-                                     item.category === 'mixed' ? '#fce4ec' : '#f1f1f1',
-                        borderRadius: 4, 
-                        paddingHorizontal: 6, 
-                        paddingVertical: 2, 
-                        marginTop: 2, 
-                        alignSelf: 'flex-start' 
+                  <Text style={styles.taskTitleSmall}>{item.title}</Text>
+                  {item.category && (
+                    <View style={{
+                      backgroundColor: item.category === 'pattern' ? '#e3f2fd' :
+                        item.category === 'numbers' ? '#f3e5f5' :
+                        item.category === 'technology' ? '#e8f5e8' :
+                        item.category === 'practical' ? '#fff3e0' :
+                        item.category === 'mixed' ? '#fce4ec' : '#f1f1f1',
+                      borderRadius: 4,
+                      paddingHorizontal: 6,
+                      paddingVertical: 2,
+                      marginLeft: 8,
+                      alignSelf: 'flex-start',
+                    }}>
+                      <Text style={{
+                        fontSize: 10,
+                        color: item.category === 'pattern' ? '#1976d2' :
+                          item.category === 'numbers' ? '#7b1fa2' :
+                          item.category === 'technology' ? '#388e3c' :
+                          item.category === 'practical' ? '#f57c00' :
+                          item.category === 'mixed' ? '#c2185b' : '#666',
+                        fontWeight: 'bold',
                       }}>
-                        <Text style={{ 
-                          fontSize: 10, 
-                          color: item.category === 'pattern' ? '#1976d2' : 
-                                 item.category === 'numbers' ? '#7b1fa2' : 
-                                 item.category === 'technology' ? '#388e3c' : 
-                                 item.category === 'practical' ? '#f57c00' : 
-                                 item.category === 'mixed' ? '#c2185b' : '#666',
-                          fontWeight: 'bold' 
-                        }}>
-                          {item.category.toUpperCase()}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
+                        {item.category.toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
                 </View>
                 {!!item.details && (
                   <Text style={styles.taskDetails}>{item.details}</Text>
                 )}
-                {/* Show ratings if available, both in one row with spacing */}
                 {(item.preRating || item.postRating) && (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, marginBottom: 2 }}>
                     {item.preRating && (
                       <>
                         <Text style={{ fontSize: 13, color: '#888', marginRight: 2 }}>Simula:</Text>
@@ -732,25 +763,44 @@ export default function ParentDashboard() {
                     )}
                   </View>
                 )}
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={[styles.taskStatus, item.status === 'done' ? styles.statusDone : item.status === 'ongoing' ? styles.statusOngoing : styles.statusNotDone]}>
-                  {item.status === 'done' && <MaterialIcons name="check-circle" size={16} color="#2ecc40" style={{ marginRight: 4 }} />}
-                  {item.status === 'ongoing' && <MaterialIcons name="access-time" size={16} color="#f1c40f" style={{ marginRight: 4 }} />}
-                  {item.status === 'notdone' && <MaterialIcons name="radio-button-unchecked" size={16} color="#bbb" style={{ marginRight: 4 }} />}
-                  <Text style={{ fontWeight: 'bold', fontSize: 13 }}>{statusLabel(item.status)}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                  <View style={[
+                    styles.taskStatus,
+                    item.status === 'done' ? styles.statusDone : item.status === 'ongoing' ? styles.statusOngoing : styles.statusNotDone,
+                  ]}>
+                    {item.status === 'done' && <MaterialIcons name="check-circle" size={16} color="#2ecc40" style={{ marginRight: 4 }} />}
+                    {item.status === 'ongoing' && <MaterialIcons name="access-time" size={16} color="#f1c40f" style={{ marginRight: 4 }} />}
+                    {item.status === 'notdone' && <MaterialIcons name="radio-button-unchecked" size={16} color="#bbb" style={{ marginRight: 4 }} />}
+                    <Text style={{ fontWeight: 'bold', fontSize: 13 }}>{statusLabel(item.status)}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {item.status === 'notdone' && (
+                      <TouchableOpacity
+                        style={styles.changeBtn}
+                        onPress={() => handleChangePress(index)}
+                      >
+                        <Feather name="refresh-cw" size={20} color="#2ecc40" />
+                      </TouchableOpacity>
+                    )}
+                    {item.status === 'notdone' && (
+                      <TouchableOpacity
+                        style={styles.simulanBtn}
+                        onPress={() => handleTaskPress(index)}
+                      >
+                        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 15 }}>Simulan</Text>
+                      </TouchableOpacity>
+                    )}
+                    {item.status === 'ongoing' && (
+                      <TouchableOpacity
+                        style={styles.markTaposBtn}
+                        onPress={() => handleTaskPress(index)}
+                      >
+                        <Text style={{ color: '#222', fontWeight: 'bold', fontSize: 15 }}>Markahang Tapos</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
-                {/* Change button */}
-                {item.status === 'notdone' && (
-                  <TouchableOpacity
-                    style={styles.changeBtn}
-                    onPress={() => handleChangePress(index)}
-                  >
-                    <Feather name="refresh-cw" size={20} color="#2ecc40" />
-                  </TouchableOpacity>
-                )}
-                              </View>
-              </TouchableOpacity>
+              </View>
             ))
           )}
         </View>
@@ -852,7 +902,11 @@ export default function ParentDashboard() {
                 >
                   <MaterialIcons name="close" size={35} color="#888" />
                 </TouchableOpacity>
-                <Text style={{ fontWeight: 'bold', fontSize: 18, marginTop: 18, marginBottom: 8, textAlign: 'center', lineHeight: 24 }}>
+                {/* Modal Title for Pre/Post */}
+                <Text style={{ fontWeight: 'bold', fontSize: 20, marginTop: 18, marginBottom: 8, textAlign: 'center', lineHeight: 24 }}>
+                  {ratingType === 'pre' ? 'Panimulang Pagsusuri' : ratingType === 'post' ? 'Pangwakas na Pagsusuri' : ''}
+                </Text>
+                <Text style={{ fontWeight: 'bold', fontSize: 16, marginBottom: 8, textAlign: 'center', lineHeight: 22 }}>
                   I-rate ang kasalukuyang kaalaman ng iyong anak sa gawaing ito
                 </Text>
                 {/* Star rating selection */}
@@ -868,13 +922,24 @@ export default function ParentDashboard() {
                     </TouchableOpacity>
                   ))}
                 </View>
-                <Pressable
-                  style={[styles.modalCloseBtn, { marginTop: 8, backgroundColor: '#2ecc40', width: 140, alignSelf: 'center', borderRadius: 20 }]}
-                  onPress={handleSubmitRating}
-                  disabled={!selectedRating}
-                >
-                  <Text style={styles.modalCloseBtnText}>Submit</Text>
-                </Pressable>
+
+                {ratingType === 'post' ? (
+                  <Pressable
+                    style={[styles.modalCloseBtn, { marginTop: 8, backgroundColor: '#27ae60', width: 180, alignSelf: 'center', borderRadius: 20 }]}
+                    onPress={handleSubmitRating}
+                    disabled={!selectedRating}
+                  >
+                    <Text style={styles.modalCloseBtnText}>Submit</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={[styles.modalCloseBtn, { marginTop: 8, backgroundColor: '#2ecc40', width: 140, alignSelf: 'center', borderRadius: 20 }]}
+                    onPress={handleSubmitRating}
+                    disabled={!selectedRating}
+                  >
+                    <Text style={styles.modalCloseBtnText}>Submit</Text>
+                  </Pressable>
+                )}
               </View>
             </View>
           </BlurView>
@@ -1379,5 +1444,43 @@ const styles = StyleSheet.create({
   reasonOptionText: {
     fontSize: 16,
     color: '#222',
+  },
+  taskCard: {
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.07,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  taskCardDone: {
+    borderLeftWidth: 5,
+    borderLeftColor: '#2ecc40',
+  },
+  taskCardOngoing: {
+    borderLeftWidth: 5,
+    borderLeftColor: '#f1c40f',
+  },
+  taskCardNotDone: {
+    borderLeftWidth: 5,
+    borderLeftColor: '#bbb',
+  },
+  simulanBtn: {
+    backgroundColor: '#2ecc40',
+    borderRadius: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 18,
+    marginLeft: 8,
+  },
+  markTaposBtn: {
+    backgroundColor: '#D4FFB2',
+    borderRadius: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 18,
+    marginLeft: 8,
   },
 }); 
