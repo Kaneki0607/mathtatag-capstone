@@ -22,6 +22,21 @@ function getStatusFromScore(score: number, total: number, pattern: number, numbe
   if (percent < 85) return 'Proficient';
   return 'Highly Proficient';
 }
+
+// --- Add fetchWithRetry helper ---
+async function fetchWithRetry(url: string, options: any, retries = 3, delay = 1500): Promise<Response> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) throw new Error('API error');
+      return response;
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise(res => setTimeout(res, delay));
+    }
+  }
+  throw new Error('Failed after retries');
+}
 const statusColors: any = {
   'Intervention': '#ff5a5a',
   'For Consolidation': '#ffb37b',
@@ -297,7 +312,7 @@ export default function ParentDashboard() {
             // No tasks, generate via API
             setTasksLoading(true);
             try {
-              const response = await fetch('https://mathtatag-api.onrender.com/predict', {
+              const response = await fetchWithRetry('https://mathtatag-api.onrender.com/predict', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -305,7 +320,7 @@ export default function ParentDashboard() {
                   subtraction_score: numbersScore,
                   income_bracket: incomeBracketValue
                 }),
-              });
+              }, 3, 1500); // 3 retries, 1.5s delay between
 
               const rawText = await response.text();
               let result: any = null;

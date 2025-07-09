@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { Audio } from 'expo-av';
+import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { onAuthStateChanged } from 'firebase/auth';
 import { get, onValue, ref, remove, set } from 'firebase/database';
@@ -30,41 +31,41 @@ interface ClassData {
   teacherId: string;
   studentIds: string[];
   students?: Student[]; // Optional for runtime compatibility
-  tasks: { title: string; details: string; status: string }[];
+  tasks: { title: string; details: string; status: string; preRating?: number; postRating?: number }[];
   learnersPerformance: { label: string; color: string; percent: number }[];
 }
 
-type ModalType = 'addClass' | 'addStudent' | 'announce' | 'category' | 'taskInfo' | 'classList' | 'startTest' | 'editStudent' | 'showImprovement' | 'evaluateStudent' | 'studentInfo' | null;
+type ModalType = 'addClass' | 'addStudent' | 'announce' | 'category' | 'taskInfo' | 'classList' | 'parentList' | 'startTest' | 'editStudent' | 'showImprovement' | 'evaluateStudent' | 'studentInfo' | null;
 
 // Helper: Compute performance distribution for pre/post test
 function getPerformanceDistribution(students: Student[] = [], type: 'pre' | 'post') {
   const categories = [
+    { label: 'Not yet taken', color: '#bbb' },
     { label: 'Intervention', color: '#ff5a5a' },
     { label: 'Consolidation', color: '#ffb37b' },
     { label: 'Enhancement', color: '#ffe066' },
     { label: 'Proficient', color: '#7ed957' },
     { label: 'Highly Proficient', color: '#27ae60' },
   ];
-  // Only count students with a valid score
-  const validScores = students.map(student => {
+  // Count students in each category
+  const counts = [0, 0, 0, 0, 0, 0];
+  students.forEach(student => {
     const scoreObj = type === 'pre' ? student.preScore : student.postScore;
-    if (!scoreObj) return null;
+    if (!scoreObj || (typeof scoreObj.pattern !== 'number' && typeof scoreObj.numbers !== 'number')) {
+      counts[0]++;
+      return;
+    }
     const score = (scoreObj.pattern ?? 0) + (scoreObj.numbers ?? 0);
-    if (typeof score !== 'number' || score < 0) return null;
-    return score;
-  }).filter(score => typeof score === 'number');
-  if (validScores.length < 2) {
-    // Not enough data: all gray
-    return categories.map(cat => ({ ...cat, color: '#bbb', percent: 0 }));
-  }
-  const counts = [0, 0, 0, 0, 0];
-  validScores.forEach(score => {
-    const percent = (score! / 20) * 100;
-    if (percent < 25) counts[0]++;
-    else if (percent < 50) counts[1]++;
-    else if (percent < 75) counts[2]++;
-    else if (percent < 85) counts[3]++;
-    else counts[4]++;
+    if (typeof score !== 'number' || score <= 0) {
+      counts[0]++;
+      return;
+    }
+    const percent = (score / 20) * 100;
+    if (percent < 25) counts[1]++;
+    else if (percent < 50) counts[2]++;
+    else if (percent < 75) counts[3]++;
+    else if (percent < 85) counts[4]++;
+    else counts[5]++;
   });
   const sum = counts.reduce((a, b) => a + b, 0);
   if (sum < 2) {
@@ -104,6 +105,15 @@ export default function TeacherDashboard() {
   const [postNumbers, setPostNumbers] = useState('0');
   const [announceTitle, setAnnounceTitle] = useState('');
   const [parentAuthCode, setParentAuthCode] = useState<string | null>(null);
+  const [copiedAuthCode, setCopiedAuthCode] = useState(false);
+  // Add state for parent list modal
+  const [parentListData, setParentListData] = useState<any[]>([]);
+  const [parentListLoading, setParentListLoading] = useState(false);
+  // Add state for parent tasks modal
+  const [parentTasksModalVisible, setParentTasksModalVisible] = useState(false);
+  const [selectedParentForTasks, setSelectedParentForTasks] = useState<any>(null);
+  const [parentTasksLoading, setParentTasksLoading] = useState(false);
+  const [parentTasks, setParentTasks] = useState<any[]>([]);
 
   // Safety net: Stop any background music when this screen gains focus
   useFocusEffect(
@@ -121,6 +131,7 @@ export default function TeacherDashboard() {
 
   // Use theme-matching harmonious colors for the chart
   const defaultCategories = [
+    { label: 'Not yet taken', color: '#bbb' },
     { label: 'Intervention', color: '#ff5a5a' },      // red
     { label: 'Consolidation', color: '#ffb37b' },    // peach/orange
     { label: 'Enhancement', color: '#ffe066' },      // yellow
@@ -243,7 +254,6 @@ export default function TeacherDashboard() {
         setEditingStudent(extra.student);
         setEditingStudentName(extra.student.nickname);
         setSelectedClassId(extra.classId);
-        // Initialize the form values
         setPrePattern(extra.student?.preScore?.pattern?.toString() ?? '0');
         setPreNumbers(extra.student?.preScore?.numbers?.toString() ?? '0');
         setPostPattern(extra.student?.postScore?.pattern?.toString() ?? '0');
@@ -260,7 +270,6 @@ export default function TeacherDashboard() {
     if (type === 'studentInfo') {
       if (extra?.student) {
         setSelectedStudent(extra.student);
-        // Fetch parent auth code
         setParentAuthCode(null); // reset first
         if (extra.student.parentId) {
           const parentRef = ref(db, `Parents/${extra.student.parentId}`);
@@ -273,6 +282,59 @@ export default function TeacherDashboard() {
             }
           }).catch(() => setParentAuthCode(null));
         }
+      }
+    }
+    // Parent List Modal: fetch all parents for the class
+    if (type === 'parentList') {
+      setSelectedClassId(extra?.classId);
+      setParentListLoading(true);
+      setParentListData([]);
+      const cls = getClassById(extra?.classId);
+      if (cls && Array.isArray(cls.students)) {
+        // For each student, fetch parent
+        Promise.all(
+          cls.students.map(async (student) => {
+            if (!student.parentId) return null;
+            const parentSnap = await get(ref(db, `Parents/${student.parentId}`));
+            if (!parentSnap.exists()) return null;
+            const parent = parentSnap.val();
+            // Fetch tasks for this parent
+            let tasks = [];
+            try {
+              const tasksSnap = await get(ref(db, `Parents/${parent.parentId}/tasks`));
+              if (tasksSnap.exists()) {
+                let loadedTasks = tasksSnap.val();
+                if (!Array.isArray(loadedTasks)) loadedTasks = Object.values(loadedTasks);
+                tasks = loadedTasks;
+              }
+            } catch {}
+            // Calculate progress
+            const doneCount = tasks.filter((t:any) => t.status === 'done').length;
+            const progressPercent = tasks.length > 0 ? Math.round((doneCount / tasks.length) * 100) : 0;
+            // Calculate pre/post average (stars out of 5)
+            // Use student's preScore/postScore
+            const preTotal = (student.preScore?.pattern ?? 0) + (student.preScore?.numbers ?? 0);
+            const postTotal = (student.postScore?.pattern ?? 0) + (student.postScore?.numbers ?? 0);
+            // Map 0-20 to 0-5 stars
+            const preStars = Math.round((preTotal / 20) * 5);
+            const postStars = Math.round((postTotal / 20) * 5);
+            return {
+              parentName: parent.name,
+              studentName: student.nickname,
+              householdIncome: parent.householdIncome,
+              preStars,
+              postStars,
+              progressPercent,
+              student,
+              parent,
+            };
+          })
+        ).then((results) => {
+          setParentListData(results.filter(Boolean));
+          setParentListLoading(false);
+        });
+      } else {
+        setParentListLoading(false);
       }
     }
     setModalVisible(true);
@@ -711,10 +773,10 @@ export default function TeacherDashboard() {
       <LinearGradient colors={['#f7fafc', '#e0f7fa']} style={[styles.classCard, { marginBottom: 15, padding: 2, borderRadius: 32, shadowColor: '#27ae60', shadowOpacity: 0.13, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 10, width: '100%', maxWidth: 540, alignSelf: 'center' }]}> 
         <View style={{ padding: isSmall ? 16 : 24, paddingBottom: isSmall ? 0 : 8 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: isSmall ? 9 : 8 }}>
-                <View>
+            <View>
               <Text style={{ fontSize: 12, color: '#888', fontWeight: '700', marginBottom: -3 }}>Section</Text>
               <Text style={{ fontSize: 35, color: '#27ae60', fontWeight: 'bold', letterSpacing: 1 }}>{cls.section}</Text>
-          </View>
+            </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', marginBottom: isSmall ? 10 : 18, gap: 6, flexWrap: 'wrap', alignSelf: 'flex-end' }}>
               <TouchableOpacity onPress={() => openModal('classList', { classId: cls.id })} activeOpacity={0.8} style={{ borderRadius: 20, overflow: 'hidden', maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
                 <View style={{
@@ -734,8 +796,9 @@ export default function TeacherDashboard() {
                   <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0097a7' }}>{cls.students?.length || 0}</Text>
                 </View>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => openModal('addStudent', { classId: cls.id })} style={{ backgroundColor: '#e0f7fa', borderRadius: 20, padding: 6, alignItems: 'center', justifyContent: 'center', elevation: 2, shadowColor: '#0097a7', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
-                <MaterialIcons name="person-add" size={22} color="#0097a7" />
+              {/* Parent List Button */}
+              <TouchableOpacity onPress={() => openModal('parentList', { classId: cls.id })} style={{ backgroundColor: '#ffe066', borderRadius: 20, padding: 6, alignItems: 'center', justifyContent: 'center', elevation: 2, shadowColor: '#ffe066', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
+                <MaterialIcons name="family-restroom" size={22} color="#b8860b" />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => openModal('announce', { classId: cls.id })} style={{ backgroundColor: '#0097a7', borderRadius: 20, padding: 6, alignItems: 'center', justifyContent: 'center', elevation: 2, shadowColor: '#0097a7', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
                 <MaterialIcons name="campaign" size={22} color="#fff" />
@@ -744,7 +807,7 @@ export default function TeacherDashboard() {
                 <MaterialIcons name="delete" size={22} color="#ff5a5a" />
               </TouchableOpacity>
             </View>
-        </View>
+          </View>
           <View style={{ marginTop: isSmall ? 8 : 16 }}>
             <AnalyticsPieChartWithLegend data={getPerformanceDistribution(cls.students || [], 'pre')} title="Pretest Performance" />
             <View style={{ height: 10 }} />
@@ -960,6 +1023,11 @@ export default function TeacherDashboard() {
         return (
           <View style={[styles.modalBox, { backgroundColor: 'rgba(255,255,255,0.98)' }]}> 
             <Text style={[styles.modalTitle, { marginBottom: 8 }]}>Class List</Text>
+            {/* Add Student Button Here */}
+            <TouchableOpacity onPress={() => openModal('addStudent', { classId: cls.id })} style={{ backgroundColor: '#e0f7fa', borderRadius: 20, padding: 8, alignItems: 'center', justifyContent: 'center', marginBottom: 10, alignSelf: 'flex-end', flexDirection: 'row', gap: 6 }}>
+              <MaterialIcons name="person-add" size={20} color="#0097a7" />
+              <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 15 }}>Add Student</Text>
+            </TouchableOpacity>
             {/* Class averages */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10 }}>
               <View style={{ flex: 1, alignItems: 'center' }}>
@@ -1130,6 +1198,142 @@ export default function TeacherDashboard() {
               />
             </ScrollView>
             <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
+          </View>
+        );
+      case 'parentList':
+        if (!cls) return null;
+        return (
+          <View style={styles.modalBox}>
+            <Text style={[styles.modalTitle, { marginBottom: 8 }]}>Parents List</Text>
+            {parentListLoading ? (
+              <Text style={{ color: '#27ae60', fontSize: 16, textAlign: 'center', marginVertical: 20 }}>Loading...</Text>
+            ) : (
+              <>
+                {/* Header row */}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <View style={{ alignItems: 'center', flex: 1 }}>
+                    <Text style={{ fontWeight: 'bold', color: '#27ae60', fontSize: 15 }}>Avg. Improvement</Text>
+                    {/* Calculate avg improvement for parents with both pre/post */}
+                    <Text style={{ color: '#27ae60', fontWeight: 'bold', fontSize: 18 }}>
+                      {(() => {
+                        const withBoth = parentListData.filter(p => p.preStars > 0 && p.postStars > 0);
+                        if (!withBoth.length) return '—';
+                        const avg = Math.round(
+                          withBoth.reduce((sum, p) => sum + (p.postStars - p.preStars), 0) / withBoth.length * 100 / 5
+                        );
+                        return `${avg > 0 ? '+' : ''}${avg}%`;
+                      })()}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: 'center', flex: 1 }}>
+                    <Text style={{ fontWeight: 'bold', color: '#0097a7', fontSize: 15 }}>Avg. Post-Assess</Text>
+                    <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 18 }}>
+                      {(() => {
+                        const withPost = parentListData.filter(p => p.postStars > 0);
+                        if (!withPost.length) return '—';
+                        const avg = Math.round(withPost.reduce((sum, p) => sum + p.postStars, 0) / withPost.length);
+                        return `${avg} Stars`;
+                      })()}
+                    </Text>
+                  </View>
+                </View>
+                {/* List header */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, minWidth: 340 }}>
+                  <Text style={{ flex: 2, fontWeight: 'bold', color: '#222', fontSize: 13 }}>Name</Text>
+                  <Text style={{ flex: 2, fontWeight: 'bold', color: '#222', fontSize: 13 }}>Task Progress</Text>
+                </View>
+                <ScrollView style={{ maxHeight: 400 }}>
+                  {parentListData.map((item, idx) => (
+                    <TouchableOpacity
+                      key={idx}
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 18, marginBottom: 14, padding: 14, minWidth: 340, gap: 10, elevation: 2, shadowColor: '#27ae60', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }}
+                      activeOpacity={0.85}
+                      onPress={() => openParentTasksModal(item)}
+                    >
+                      <View style={{ flex: 2 }}>
+                        <Text style={{ fontWeight: 'bold', fontSize: 15, color: '#222' }}>{item.parentName}</Text>
+                        <Text style={{ fontSize: 13, color: '#444' }}>Student: {item.studentName}</Text>
+                        <Text style={{ fontSize: 12, color: '#888' }}>SES: {item.householdIncome || '—'}</Text>
+                        {/* Pre/Post stars */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                          <Text style={{ fontSize: 11, color: '#888', marginRight: 2 }}>Pre-Assessment</Text>
+                          {[1,2,3,4,5].map(n => (
+                            <MaterialIcons key={n} name={n <= item.preStars ? 'star' : 'star-border'} size={15} color={n <= item.preStars ? '#FFD600' : '#bbb'} />
+                          ))}
+                          <Text style={{ fontSize: 11, color: '#888', marginLeft: 8 }}>Post-Assessment</Text>
+                          {[1,2,3,4,5].map(n => (
+                            <MaterialIcons key={n} name={n <= item.postStars ? 'star' : 'star-border'} size={15} color={n <= item.postStars ? '#FFD600' : '#bbb'} />
+                          ))}
+                        </View>
+                      </View>
+                      {/* Progress bar */}
+                      <View style={{ flex: 2, alignItems: 'center' }}>
+                        <View style={{ width: 120, height: 28, backgroundColor: '#e6e6e6', borderRadius: 14, justifyContent: 'center', marginBottom: 2 }}>
+                          <View style={{ width: `${item.progressPercent}%`, height: 28, backgroundColor: '#27ae60', borderRadius: 14, position: 'absolute', left: 0, top: 0 }} />
+                          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 15, position: 'absolute', left: 0, right: 0, textAlign: 'center' }}>{item.progressPercent}%</Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            )}
+            <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
+            {/* Parent Tasks Modal */}
+            <Modal
+              visible={parentTasksModalVisible}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setParentTasksModalVisible(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalBox}>
+                  <Text style={styles.modalTitle}>Parent Tasks</Text>
+                  {selectedParentForTasks && (
+                    <>
+                      <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#27ae60', marginBottom: 2 }}>{selectedParentForTasks.parentName}</Text>
+                      <Text style={{ fontSize: 14, color: '#444', marginBottom: 6 }}>Student: {selectedParentForTasks.studentName}</Text>
+                    </>
+                  )}
+                  {parentTasksLoading ? (
+                    <Text style={{ color: '#27ae60', fontSize: 16, textAlign: 'center', marginVertical: 20 }}>Loading tasks...</Text>
+                  ) : parentTasks.length === 0 ? (
+                    <Text style={{ color: '#888', fontSize: 15, textAlign: 'center', marginVertical: 20 }}>No tasks found for this parent.</Text>
+                  ) : (
+                    <ScrollView style={{ maxHeight: 320 }}>
+                      {parentTasks.map((task, idx) => (
+                        <View key={idx} style={{ backgroundColor: '#f9f9f9', borderRadius: 12, padding: 12, marginBottom: 10, elevation: 1 }}>
+                          <Text style={{ fontWeight: 'bold', fontSize: 15, color: '#222', marginBottom: 2 }}>{task.title}</Text>
+                          {task.details && <Text style={{ fontSize: 13, color: '#444', marginBottom: 2 }}>{task.details}</Text>}
+                          {task.objective && <Text style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>Objective: {task.objective}</Text>}
+                          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                            <Text style={{ fontSize: 12, color: '#888', marginRight: 6 }}>Status:</Text>
+                            <Text style={{ fontSize: 12, color: task.status === 'done' ? '#27ae60' : task.status === 'ongoing' ? '#f1c40f' : '#ff5a5a', fontWeight: 'bold' }}>{task.status === 'done' ? 'Done' : task.status === 'ongoing' ? 'Ongoing' : 'Not Done'}</Text>
+                          </View>
+                          {(task.preRating || task.postRating) && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                              {task.preRating && (
+                                <>
+                                  <Text style={{ fontSize: 12, color: '#888', marginRight: 2 }}>Simula:</Text>
+                                  {renderStars(task.preRating)}
+                                </>
+                              )}
+                              {task.postRating && (
+                                <>
+                                  <Text style={{ fontSize: 12, color: '#888', marginLeft: 12, marginRight: 2 }}>Matapos:</Text>
+                                  {renderStars(task.postRating)}
+                                </>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                      ))}
+                    </ScrollView>
+                  )}
+                  <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={() => setParentTasksModalVisible(false)}><Text style={styles.modalBtnText}>Close</Text></Pressable>
+                </View>
+              </View>
+            </Modal>
           </View>
         );
       case 'startTest':
@@ -1427,7 +1631,27 @@ export default function TeacherDashboard() {
             <Text style={styles.modalTitle}>Student Information</Text>
             <Text style={styles.modalStat}>Student: <Text style={styles.modalStatNum}>{selectedStudent?.nickname}</Text></Text>
             <Text style={styles.modalStat}>Number: <Text style={styles.modalStatNum}>{selectedStudent?.studentNumber}</Text></Text>
-            <Text style={styles.modalStat}>Parent Auth Code: <Text style={styles.modalStatNum}>{parentAuthCode ?? 'Loading...'}</Text></Text>
+            <Text style={styles.modalStat}>
+              Parent Auth Code: 
+              <Text style={styles.modalStatNum}>
+                <Text
+                  selectable
+                  style={{ textDecorationLine: 'underline', color: '#27ae60' }}
+                  onPress={async () => {
+                    if (parentAuthCode) {
+                      await Clipboard.setStringAsync(parentAuthCode);
+                      setCopiedAuthCode(true);
+                      setTimeout(() => setCopiedAuthCode(false), 1200);
+                    }
+                  }}
+                >
+                  {parentAuthCode ?? 'Loading...'}
+                </Text>
+                {copiedAuthCode && (
+                  <Text style={{ color: '#27ae60', marginLeft: 8, fontSize: 13 }}>Copied!</Text>
+                )}
+              </Text>
+            </Text>
             <Text style={styles.modalStat}>Pre-test: <Text style={styles.modalStatNum}>{selectedStudent?.preScore ? String((selectedStudent.preScore.pattern ?? 0) + (selectedStudent.preScore.numbers ?? 0)) : 'N/A'}/20</Text> (Pattern: {String(selectedStudent?.preScore?.pattern ?? 0)}, Numbers: {String(selectedStudent?.preScore?.numbers ?? 0)})</Text>
             <Text style={styles.modalStat}>Post-test: <Text style={styles.modalStatNum}>{selectedStudent?.postScore ? String((selectedStudent.postScore.pattern ?? 0) + (selectedStudent.postScore.numbers ?? 0)) : 'N/A'}/20</Text> (Pattern: {String(selectedStudent?.postScore?.pattern ?? 0)}, Numbers: {String(selectedStudent?.postScore?.numbers ?? 0)})</Text>
             <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
@@ -1436,6 +1660,33 @@ export default function TeacherDashboard() {
       default:
         return null;
     }
+  };
+
+  // Helper to open parent tasks modal and fetch tasks
+  const openParentTasksModal = async (parentObj: any) => {
+    setSelectedParentForTasks(parentObj);
+    setParentTasks([]);
+    setParentTasksLoading(true);
+    setParentTasksModalVisible(true);
+    try {
+      const tasksSnap = await get(ref(db, `Parents/${parentObj.parent.parentId}/tasks`));
+      let loadedTasks = [];
+      if (tasksSnap.exists()) {
+        loadedTasks = tasksSnap.val();
+        if (!Array.isArray(loadedTasks)) loadedTasks = Object.values(loadedTasks);
+      }
+      setParentTasks(loadedTasks);
+    } catch (err) {
+      setParentTasks([]);
+    }
+    setParentTasksLoading(false);
+  };
+
+  // Helper to render stars
+  const renderStars = (count: number) => {
+    return Array.from({ length: 5 }, (_, i) =>
+      <MaterialIcons key={i} name={i < count ? 'star' : 'star-border'} size={15} color={i < count ? '#FFD600' : '#bbb'} style={{ marginRight: 1 }} />
+    );
   };
 
   return (
