@@ -201,6 +201,9 @@ export default function ParentDashboard() {
   const [selectedRating, setSelectedRating] = useState<number>(0);
   const [pretestNotDone, setPretestNotDone] = useState(false);
   const [tasksLoading, setTasksLoading] = useState(false);
+  // Add state for evaluation modal
+  const [showEvaluationModal, setShowEvaluationModal] = useState(false);
+  const [lastSeenEvaluationTimestamp, setLastSeenEvaluationTimestamp] = useState<string | null>(null);
 
   React.useEffect(() => {
     if (!parentId) return;
@@ -364,6 +367,16 @@ export default function ParentDashboard() {
       fetchStudentAndTasks();
     }
   }, [parentData?.studentId, parentData?.householdIncome, parentData?.parentId]);
+
+  // Show evaluation modal if a new evaluation is present
+  useEffect(() => {
+    if (parentData?.latestEvaluation && parentData.latestEvaluation.timestamp) {
+      if (parentData.latestEvaluation.timestamp !== lastSeenEvaluationTimestamp) {
+        setShowEvaluationModal(true);
+        setLastSeenEvaluationTimestamp(parentData.latestEvaluation.timestamp);
+      }
+    }
+  }, [parentData?.latestEvaluation]);
 
   const handleSetupSubmit = async () => {
     if (!setupName.trim() || !setupContact.trim()) {
@@ -574,6 +587,27 @@ export default function ParentDashboard() {
 
   return (
     <ImageBackground source={bgImage} style={styles.bg} imageStyle={{ opacity: 0.13, resizeMode: 'cover' }}>
+      {/* Evaluation Modal */}
+      <Modal
+        visible={showEvaluationModal && !!parentData?.latestEvaluation}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEvaluationModal(false)}
+      >
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.18)' }}>
+          <View style={{ width: '85%', maxWidth: 420, minWidth: 300, maxHeight: 520, minHeight: 320, backgroundColor: 'rgba(255,255,255,0.97)', borderRadius: 22, padding: 22, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }}>
+            <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#27ae60', marginBottom: 10, textAlign: 'center' }}>Message from Teacher</Text>
+            <ScrollView style={{ maxHeight: 320, minHeight: 120, width: '100%' }} contentContainerStyle={{ flexGrow: 1 }}>
+              <Text style={{ fontSize: 15, color: '#222', marginBottom: 8, textAlign: 'justify', lineHeight: 22 }}>{parentData?.latestEvaluation?.message}</Text>
+            </ScrollView>
+            <Text style={{ fontSize: 13, color: '#888', marginBottom: 8, textAlign: 'center' }}>— {parentData?.latestEvaluation?.teacher} ({parentData?.latestEvaluation?.student})</Text>
+            <Text style={{ fontSize: 12, color: '#aaa', marginBottom: 8, textAlign: 'center' }}>{parentData?.latestEvaluation?.timestamp ? new Date(parentData.latestEvaluation.timestamp).toLocaleString() : ''}</Text>
+            <TouchableOpacity style={{ marginTop: 10, backgroundColor: '#27ae60', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 24 }} onPress={() => setShowEvaluationModal(false)}>
+              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       <ScrollView contentContainerStyle={{ alignItems: 'center', paddingBottom: 32 }}>
         <View style={styles.headerWrap}>
           <View style={styles.headerRow}>

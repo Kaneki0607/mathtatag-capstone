@@ -6,7 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { onAuthStateChanged } from 'firebase/auth';
 import { get, onValue, ref, remove, set } from 'firebase/database';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Dimensions, FlatList, ImageBackground, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, FlatList, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { G, Path, Svg } from 'react-native-svg';
 import { auth, db } from '../constants/firebaseConfig';
@@ -179,6 +179,10 @@ export default function TeacherDashboard() {
   const [evaluationParentTasksLoading, setEvaluationParentTasksLoading] = useState(false);
   // Add state for ghostwriter loading
   const [ghostLoading, setGhostLoading] = useState(false);
+  // Add this to the top-level state declarations
+  const [evaluationShowAllTasks, setEvaluationShowAllTasks] = useState(false);
+  // Add state for ghostwriter text visibility
+  const [showGhostwriterText, setShowGhostwriterText] = useState(true);
 
   // Safety net: Stop any background music when this screen gains focus
   useFocusEffect(
@@ -329,10 +333,13 @@ export default function TeacherDashboard() {
       setImprovementData(extra);
     }
     if (type === 'evaluateStudent') {
+      setEvaluationShowAllTasks(false);
       setEvaluationData(extra);
       setEvaluationText('');
       setEvaluationParentTasks([]);
       setEvaluationParentTasksLoading(true);
+      setShowGhostwriterText(true); // Show text initially
+      setTimeout(() => setShowGhostwriterText(false), 5000); // Hide after 5 seconds
       // Fetch parent tasks for this student
       if (extra?.student?.parentId) {
         get(ref(db, `Parents/${extra.student.parentId}/tasks`)).then(tasksSnap => {
@@ -441,6 +448,7 @@ export default function TeacherDashboard() {
     setImprovementData(null);
     setEvaluationData(null);
     setEvaluationText('');
+    setEvaluationShowAllTasks(false);
   };
 
   // Add new class to database
@@ -1689,138 +1697,192 @@ export default function TeacherDashboard() {
         let evalPercentColor = '#ffe066';
         if (evalPercent > 0) evalPercentColor = '#27ae60';
         else if (evalPercent < 0) evalPercentColor = '#ff5a5a';
+        // Show only first 3 parent tasks, with option to show more
+        const visibleTasks = evaluationShowAllTasks ? evaluationParentTasks : evaluationParentTasks.slice(0, 3);
         return (
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Send Evaluation to Parent</Text>
-            <Text style={styles.modalStat}>Student: <Text style={styles.modalStatNum}>{evalStudent.nickname}</Text></Text>
-            <Text style={styles.modalStat}>Pre-test: <Text style={styles.modalStatNum}>{String(evalPreTotal)}/20</Text> (Pattern: {String(evalPreScore.pattern ?? 0)}, Numbers: {String(evalPreScore.numbers ?? 0)})</Text>
-            <Text style={styles.modalStat}>Post-test: <Text style={styles.modalStatNum}>{String(evalPostTotal)}/20</Text> (Pattern: {String(evalPostScore.pattern ?? 0)}, Numbers: {String(evalPostScore.numbers ?? 0)})</Text>
-            <Text style={styles.modalStat}>Improvement: <Text style={[styles.modalStatNum, { color: evalPercentColor }]}>{evalPercent > 0 ? '+' : ''}{evalPercent}%</Text></Text>
-            {/* Parent Tasks List */}
-            <View style={{ marginTop: 12, marginBottom: 10 }}>
-              <Text style={{ fontWeight: 'bold', color: '#27ae60', fontSize: 15, marginBottom: 6 }}>Parent Tasks</Text>
-              {evaluationParentTasksLoading ? (
-                <Text style={{ color: '#27ae60', fontSize: 15, textAlign: 'center', marginVertical: 10 }}>Loading tasks...</Text>
-              ) : evaluationParentTasks.length === 0 ? (
-                <Text style={{ color: '#888', fontSize: 14, textAlign: 'center', marginVertical: 10 }}>No tasks found for this parent.</Text>
-              ) : (
-                <View style={{ maxHeight: 140, borderWidth: 1, borderColor: '#e0f7e2', borderRadius: 10, overflow: 'hidden', backgroundColor: '#f9f9f9' }}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ flex: 1 }}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+          >
+            <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }} keyboardShouldPersistTaps="handled">
+              <View style={[styles.modalBox, { backgroundColor: '#f8f9fa', paddingTop: 18, paddingBottom: 10 }]}> 
+                {/* Student Info Card */}
+                <View style={{ backgroundColor: '#f3f6f8', borderRadius: 14, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e0e6ea', alignItems: 'flex-start' }}>
+                  <Text style={{ fontWeight: '600', color: '#27ae60', fontSize: 15, marginBottom: 2 }}>Student: <Text style={{ color: '#222', fontWeight: 'bold' }}>{evalStudent.nickname}</Text></Text>
+                  <Text style={{ fontSize: 13, color: '#444', marginBottom: 2 }}>
+                    Pre-test: <Text style={{ color: '#0097a7', fontWeight: 'bold' }}>{evalPreTotal}/20</Text> <Text style={{ color: '#888' }}>(Pattern: <Text style={{ color: '#222', fontWeight: 'bold' }}>{evalPreScore.pattern}</Text>, Numbers: <Text style={{ color: '#222', fontWeight: 'bold' }}>{evalPreScore.numbers}</Text>)</Text>
+                  </Text>
+                  <Text style={{ fontSize: 13, color: '#444', marginBottom: 2 }}>
+                    Post-test: <Text style={{ color: '#0097a7', fontWeight: 'bold' }}>{evalPostTotal}/20</Text> <Text style={{ color: '#888' }}>(Pattern: <Text style={{ color: '#222', fontWeight: 'bold' }}>{evalPostScore.pattern}</Text>, Numbers: <Text style={{ color: '#222', fontWeight: 'bold' }}>{evalPostScore.numbers}</Text>)</Text>
+                  </Text>
+                  <Text style={{ fontSize: 13, color: '#444', marginBottom: 0 }}>
+                    Improvement: <Text style={{ color: evalPercentColor, fontWeight: 'bold' }}>{evalPercent > 0 ? '+' : ''}{evalPercent}%</Text>
+                  </Text>
+                </View>
+                {/* Divider */}
+                <View style={{ height: 1, backgroundColor: '#e0e6ea', marginVertical: 8, width: '110%', alignSelf: 'center' }} />
+                {/* Parent Tasks Section */}
+                <Text style={{ fontWeight: '500', color: '#27ae60', fontSize: 14, marginBottom: 4, marginLeft: 2 }}>Parent Tasks</Text>
+                <View style={{ maxHeight: 140, borderWidth: 1, borderColor: '#e0f7e2', borderRadius: 10, overflow: 'hidden', backgroundColor: '#f9f9f9', marginBottom: 8 }}>
                   <ScrollView style={{ maxHeight: 140 }}>
                     <View style={{ flexDirection: 'row', paddingVertical: 6, borderBottomWidth: 1, borderColor: '#e0f7e2', backgroundColor: '#e0f7fa' }}>
-                      <Text style={{ flex: 2, fontWeight: 'bold', color: '#0097a7', fontSize: 13, paddingLeft: 10 }}>Title</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator style={{ flex: 2 }}>
+                        <Text style={{ fontWeight: 'bold', color: '#0097a7', fontSize: 11, paddingLeft: 10, minWidth: 80 }}>Title</Text>
+                      </ScrollView>
                       <Text style={{ flex: 1, fontWeight: 'bold', color: '#0097a7', fontSize: 13, textAlign: 'center' }}>Pre</Text>
                       <Text style={{ flex: 1, fontWeight: 'bold', color: '#0097a7', fontSize: 13, textAlign: 'center' }}>Post</Text>
                     </View>
-                    {evaluationParentTasks.map((task, idx) => (
+                    {visibleTasks.map((task, idx) => (
                       <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, borderBottomWidth: 1, borderColor: '#f0f0f0', paddingHorizontal: 6 }}>
-                        <Text style={{ flex: 2, color: '#222', fontSize: 14, paddingLeft: 6 }} numberOfLines={1} ellipsizeMode="tail">{task.title}</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator style={{ flex: 2 }}>
+                          <Text style={{ color: '#222', fontSize: 11, paddingLeft: 6, minWidth: 80 }} numberOfLines={1} ellipsizeMode="tail">{task.title}</Text>
+                        </ScrollView>
                         <Text style={{ flex: 1, color: '#888', fontSize: 14, textAlign: 'center' }}>{typeof task.preRating === 'number' ? task.preRating : '-'}</Text>
                         <Text style={{ flex: 1, color: '#888', fontSize: 14, textAlign: 'center' }}>{typeof task.postRating === 'number' ? task.postRating : '-'}</Text>
                       </View>
                     ))}
+                    {evaluationParentTasks.length > 3 && !evaluationShowAllTasks && (
+                      <TouchableOpacity onPress={() => setEvaluationShowAllTasks(true)} style={{ padding: 8, alignItems: 'center' }}>
+                        <Text style={{ color: '#27ae60', fontWeight: 'bold', fontSize: 13 }}>Show more...</Text>
+                      </TouchableOpacity>
+                    )}
                   </ScrollView>
                 </View>
-              )}
-            </View>
-            {/* Evaluation Textbox with Ghostwriter button on top right */}
-            <View style={{ position: 'relative', marginBottom: 18 }}>
-              <TextInput
-                style={[
-                  styles.modalInput,
-                  {
-                    minHeight: 180,
-                    maxHeight: 260,
-                    textAlignVertical: 'top',
-                    paddingRight: 48,
-                    fontSize: 16,
-                  },
-                ]}
-                placeholder="Type your evaluation here..."
-                value={evaluationText}
-                onChangeText={setEvaluationText}
-                multiline
-                numberOfLines={8}
-              />
-              {/* Ghostwriter button (ghost icon + text) */}
-              <TouchableOpacity
-                style={{
-                  position: 'absolute',
-                  top: 10,
-                  right: 10,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: 'rgba(255,255,255,0.95)',
-                  borderColor: '#27ae60',
-                  borderWidth: 1,
-                  borderRadius: 16,
-                  paddingVertical: 4,
-                  paddingHorizontal: 10,
-                  zIndex: 10,
-                  opacity: 0.95,
-                  shadowColor: '#27ae60',
-                  shadowOpacity: 0.10,
-                  shadowRadius: 6,
-                  shadowOffset: { width: 0, height: 2 },
-                }}
-                onPress={async () => {
-                  if (evaluationParentTasksLoading || !evaluationData) return;
-                  // Prepare prompt data
-                  const studentName = evaluationData.student.nickname;
-                  const patternScore = evaluationData.student.postScore?.pattern ?? 0;
-                  const subtractionScore = evaluationData.student.postScore?.numbers ?? 0;
-                  const preTotal = (evaluationData.student.preScore?.pattern ?? 0) + (evaluationData.student.preScore?.numbers ?? 0);
-                  const postTotal = (evaluationData.student.postScore?.pattern ?? 0) + (evaluationData.student.postScore?.numbers ?? 0);
-                  const percentImprovement = preTotal > 0 ? Math.round(((postTotal - preTotal) / preTotal) * 100) : 0;
-                  const taskSummaries = (evaluationParentTasks || []).map(task => ({
-                    title: task.title,
-                    details: task.details || '',
-                    preScore: typeof task.preRating === 'number' ? task.preRating : '-',
-                    postScore: typeof task.postRating === 'number' ? task.postRating : '-',
-                  }));
-                  // Generate prompt
-                  const prompt = generateFeedbackPrompt({
-                    studentName,
-                    patternScore,
-                    subtractionScore,
-                    percentImprovement,
-                    taskSummaries,
-                  });
-                  setEvaluationText('');
-                  setGhostLoading(true);
-                  try {
-                    const response = await askGpt(prompt);
-                    setEvaluationText(response);
-                  } catch (err) {
-                    setEvaluationText('');
-                    Alert.alert('Error', 'Failed to generate evaluation.');
-                  }
-                  setGhostLoading(false);
-                }}
-                disabled={ghostLoading || evaluationParentTasksLoading}
-              >
-                <MaterialCommunityIcons name="ghost" size={22} color="#27ae60" style={{ marginRight: 6 }} />
-                <Text style={{ color: '#27ae60', fontWeight: 'bold', fontSize: 13 }}>Ghostwriter</Text>
+                {/* Divider */}
+                <View style={{ height: 1, backgroundColor: '#e0e6ea', marginVertical: 8, width: '110%', alignSelf: 'center' }} />
+                {/* Evaluation Textbox Section */}
+                <Text style={{ fontWeight: '500', color: '#27ae60', fontSize: 14, marginBottom: 4, marginLeft: 2 }}>Message to Parent</Text>
+                <View style={{ position: 'relative', marginBottom: 18 }}>
+                  <TextInput
+                    style={[
+                      styles.modalInput,
+                      {
+                        minHeight: 200, // Make textbox bigger
+                        maxHeight: 320,
+                        textAlignVertical: 'top',
+                        paddingRight: 48,
+                        fontSize: 16,
+                        backgroundColor: '#f3f6f8',
+                        borderColor: '#e0e6ea',
+                        borderWidth: 1,
+                        borderRadius: 12,
+                      },
+                    ]}
+                    placeholder="Type your evaluation here..."
+                    value={evaluationText}
+                    onChangeText={setEvaluationText}
+                    multiline
+                    numberOfLines={10}
+                  />
+                  {/* Ghostwriter button (ghost icon + text, floating) */}
+                  <TouchableOpacity
+                    style={{
+                      position: 'absolute',
+                      top: 10,
+                      right: 10,
+                      backgroundColor: '#fff',
+                      borderColor: '#27ae60',
+                      borderWidth: 1,
+                      borderRadius: 20,
+                      padding: 7,
+                      zIndex: 10,
+                      opacity: 0.97,
+                      shadowColor: '#27ae60',
+                      shadowOpacity: 0.10,
+                      shadowRadius: 6,
+                      shadowOffset: { width: 0, height: 2 },
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                    }}
+                    onPress={async () => {
+                      if (evaluationParentTasksLoading || !evaluationData) return;
+                      // Prepare prompt data
+                      const studentName = evaluationData.student.nickname;
+                      const patternScore = evaluationData.student.postScore?.pattern ?? 0;
+                      const subtractionScore = evaluationData.student.postScore?.numbers ?? 0;
+                      const preTotal = (evaluationData.student.preScore?.pattern ?? 0) + (evaluationData.student.preScore?.numbers ?? 0);
+                      const postTotal = (evaluationData.student.postScore?.pattern ?? 0) + (evaluationData.student.postScore?.numbers ?? 0);
+                      const percentImprovement = preTotal > 0 ? Math.round(((postTotal - preTotal) / preTotal) * 100) : 0;
+                      const taskSummaries = (evaluationParentTasks || []).map(task => ({
+                        title: task.title,
+                        details: task.details || '',
+                        preScore: typeof task.preRating === 'number' ? task.preRating : '-',
+                        postScore: typeof task.postRating === 'number' ? task.postRating : '-',
+                      }));
+                      // Generate prompt
+                      const prompt = generateFeedbackPrompt({
+                        studentName,
+                        patternScore,
+                        subtractionScore,
+                        percentImprovement,
+                        taskSummaries,
+                      });
+                      setEvaluationText('');
+                      setGhostLoading(true);
+                      try {
+                        const response = await askGpt(prompt);
+                        setEvaluationText(response);
+                      } catch (err) {
+                        setEvaluationText('');
+                        Alert.alert('Error', 'Failed to generate evaluation.');
+                      }
+                      setGhostLoading(false);
+                    }}
+                    disabled={ghostLoading || evaluationParentTasksLoading}
+                  >
+                    <MaterialCommunityIcons name="ghost" size={22} color="#27ae60" />
+                    {showGhostwriterText && (
+                      <Text style={{ color: '#27ae60', fontWeight: 'bold', marginLeft: 6, fontSize: 13 }}>Ghostwriter</Text>
+                    )}
+                    {ghostLoading && (
+                      <ActivityIndicator size="small" color="#27ae60" style={{ marginLeft: 6 }} />
+                    )}
+                  </TouchableOpacity>
+                </View>
+                {/* Show loading spinner in textbox if generating */}
                 {ghostLoading && (
-                  <ActivityIndicator size="small" color="#27ae60" style={{ marginLeft: 8 }} />
+                  <View style={{ position: 'absolute', left: 0, right: 0, top: 60, alignItems: 'center', zIndex: 20 }}>
+                    <ActivityIndicator size="large" color="#27ae60" />
+                  </View>
                 )}
-              </TouchableOpacity>
-            </View>
-            {/* Show loading spinner in textbox if generating */}
-            {ghostLoading && (
-              <View style={{ position: 'absolute', left: 0, right: 0, top: 60, alignItems: 'center', zIndex: 20 }}>
-                <ActivityIndicator size="large" color="#27ae60" />
+                {/* Action Buttons */}
+                <View style={[styles.modalBtnRow, { marginTop: 2 }]}> 
+                  <Pressable style={[styles.modalBtn, { backgroundColor: 'transparent', elevation: 0 }]} onPress={closeModal}><Text style={{ color: '#888', fontWeight: 'bold', fontSize: 15 }}>Cancel</Text></Pressable>
+                  <Pressable style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={async () => {
+                    if (!evaluationText.trim() || !evaluationData?.student?.parentId) {
+                      Alert.alert('Error', 'No evaluation message or parent found.');
+                      return;
+                    }
+                    const parentId = evaluationData.student.parentId;
+                    // Debug log for parentId
+                    console.log('Sending evaluation to parentId:', parentId);
+                    // Check if parent exists
+                    try {
+                      const parentSnap = await get(ref(db, `Parents/${parentId}`));
+                      if (!parentSnap.exists()) {
+                        Alert.alert('Error', `Parent not found for ID: ${parentId}`);
+                        return;
+                      }
+                      // Use teacherName from state, not redeclare
+                      const evaluationPayload = {
+                        message: evaluationText.trim(),
+                        timestamp: new Date().toISOString(),
+                        teacher: teacherName || 'Teacher',
+                        student: evaluationData.student.nickname,
+                      };
+                      await set(ref(db, `Parents/${parentId}/latestEvaluation`), evaluationPayload);
+                      Alert.alert('Success', 'Evaluation sent to parent!');
+                      setEvaluationText('');
+                      closeModal();
+                    } catch (err) {
+                      Alert.alert('Error', 'Failed to send evaluation.');
+                    }
+                  }}><Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Send Evaluation</Text></Pressable>
+                </View>
               </View>
-            )}
-            <View style={styles.modalBtnRow}>
-              <Pressable style={styles.modalBtn} onPress={closeModal}><Text style={styles.modalBtnText}>Cancel</Text></Pressable>
-              <Pressable style={[styles.modalBtn, styles.modalBtnPrimary]} onPress={() => {
-                Alert.alert('Send Evaluation', 'Are you sure you want to send this evaluation to the parent?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Send', style: 'destructive', onPress: () => { setEvaluationText(''); closeModal(); } },
-                ]);
-              }}><Text style={[styles.modalBtnText, styles.modalBtnTextPrimary]}>Send Evaluation</Text></Pressable>
-            </View>
-          </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
         );
       case 'studentInfo':
         return (
@@ -2263,8 +2325,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalBox: {
-    width: Dimensions.get('window').width < 400 ? '98%' : '85%',
-    maxWidth: 420,
+    width: Dimensions.get('window').width < 400 ? '98%' : '96%',
+    maxWidth: 500,
+    marginHorizontal: '1%',
     backgroundColor: 'rgba(255,255,255,0.98)',
     borderRadius: 22,
     padding: Dimensions.get('window').width < 400 ? 12 : 24,
