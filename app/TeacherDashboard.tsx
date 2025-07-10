@@ -183,6 +183,36 @@ export default function TeacherDashboard() {
   const [evaluationShowAllTasks, setEvaluationShowAllTasks] = useState(false);
   // Add state for ghostwriter text visibility
   const [showGhostwriterText, setShowGhostwriterText] = useState(true);
+  // Add state for ghostwriter loading statements
+  const ghostLoadingStatements = [
+    'Analyzing tasks and progress...',
+    'Classifying strengths and areas for growth...',
+    'Composing feedback for the parent...',
+    'Summarizing student performance...'
+  ];
+  const [ghostLoadingStatementIdx, setGhostLoadingStatementIdx] = useState(0);
+
+  // Place all useEffect hooks here, after all useState hooks
+  useEffect(() => {
+    let interval: any;
+    if (ghostLoading) {
+      setGhostLoadingStatementIdx(0);
+      interval = setInterval(() => {
+        setGhostLoadingStatementIdx(idx => (idx + 1) % ghostLoadingStatements.length);
+      }, 1200);
+    } else {
+      setGhostLoadingStatementIdx(0);
+      if (interval) clearInterval(interval);
+    }
+    return () => { if (interval) clearInterval(interval); };
+  }, [ghostLoading]);
+
+  // Add useEffect to handle auto-selecting class for announcements
+  useEffect(() => {
+    if (modalType === 'announce' && classes.length === 1 && !selectedClassId) {
+      setSelectedClassId(classes[0].id);
+    }
+  }, [modalType, classes, selectedClassId]);
 
   // Safety net: Stop any background music when this screen gains focus
   useFocusEffect(
@@ -1123,71 +1153,58 @@ export default function TeacherDashboard() {
         if (avgImprovement > 0) avgImprovementColor = '#27ae60';
         else if (avgImprovement < 0) avgImprovementColor = '#ff5a5a';
         return (
-          <View style={[styles.modalBox, { backgroundColor: 'rgba(255,255,255,0.98)' }]}> 
-            <Text style={[styles.modalTitle, { marginBottom: 8 }]}>Class List</Text>
-            {/* Add Student Button Here */}
-            <TouchableOpacity onPress={() => openModal('addStudent', { classId: cls.id })} style={{ backgroundColor: '#e0f7fa', borderRadius: 20, padding: 8, alignItems: 'center', justifyContent: 'center', marginBottom: 10, alignSelf: 'flex-end', flexDirection: 'row', gap: 6 }}>
-              <MaterialIcons name="person-add" size={20} color="#0097a7" />
-              <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 15 }}>Add Student</Text>
-            </TouchableOpacity>
-            {/* Class averages */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 10 }}>
-              <View style={{ flex: 1, alignItems: 'center' }}>
+          <View style={[styles.modalBox, { paddingBottom: 80, alignItems: 'stretch', minHeight: 520 }]}> 
+            {/* Title */}
+            <View style={{ alignItems: 'center', marginTop: 18, marginBottom: 10 }}>
+              <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#27ae60', textAlign: 'center', marginBottom: 6, letterSpacing: 1 }}>Class List</Text>
+            </View>
+            {/* Class averages row */}
+            <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 32, marginBottom: 18, backgroundColor: '#f3f6f8', borderRadius: 16, padding: 14, shadowColor: '#27ae60', shadowOpacity: 0.07, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }}>
+              <View style={{ alignItems: 'center', flex: 1 }}>
+                <MaterialIcons name="trending-up" size={22} color={avgImprovementColor} style={{ marginBottom: 2 }} />
                 <Text style={{ fontWeight: 'bold', fontSize: 14, color: '#222' }}>Avg. Improvement</Text>
                 <Text style={{ fontWeight: 'bold', fontSize: 18, color: avgImprovementColor }}>{avgImprovement > 0 ? '+' : ''}{avgImprovement}%</Text>
               </View>
-              <View style={{ flex: 1, alignItems: 'center' }}>
+              <View style={{ width: 1, backgroundColor: '#e0e6ea', height: 38, alignSelf: 'center', marginHorizontal: 8 }} />
+              <View style={{ alignItems: 'center', flex: 1 }}>
+                <MaterialIcons name="bar-chart" size={22} color="#0097a7" style={{ marginBottom: 2 }} />
                 <Text style={{ fontWeight: 'bold', fontSize: 14, color: '#222' }}>Avg. Post-test</Text>
                 <Text style={{ fontWeight: 'bold', fontSize: 18, color: '#0097a7' }}>{avgPost}/20</Text>
               </View>
             </View>
-            {/* Column header row */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, minWidth: 340 }}>
+            {/* Table header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#e0f7fa', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10, marginBottom: 6, minWidth: 340 }}>
               <TouchableOpacity style={{ flex: 1, minWidth: 90 }} onPress={() => handleSort('name')}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 13 }}>Name</Text>
-                  {sortColumn === 'name' ? (
-                    <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 13, marginLeft: 2 }}>{sortAsc ? '\u25B2' : '\u25BC'}</Text>
-                  ) : null}
-                </View>
+                <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 13, textAlign: 'left' }}>Name{sortColumn === 'name' ? (sortAsc ? ' ▲' : ' ▼') : ''}</Text>
               </TouchableOpacity>
+              <View style={{ width: 1, backgroundColor: '#e0e6ea', height: 18, marginHorizontal: 4 }} />
               <TouchableOpacity style={{ minWidth: 90, alignItems: 'center' }} onPress={() => handleSort('pre')}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 13 }}>Pre-test</Text>
-                  {sortColumn === 'pre' ? (
-                    <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 13, marginLeft: 2 }}>{sortAsc ? '\u25B2' : '\u25BC'}</Text>
-                  ) : null}
-                </View>
+                <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 13, textAlign: 'center' }}>Pre-test{sortColumn === 'pre' ? (sortAsc ? ' ▲' : ' ▼') : ''}</Text>
               </TouchableOpacity>
+              <View style={{ width: 1, backgroundColor: '#e0e6ea', height: 18, marginHorizontal: 4 }} />
               <TouchableOpacity style={{ minWidth: 90, alignItems: 'center' }} onPress={() => handleSort('post')}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 13 }}>Post-test</Text>
-                  {sortColumn === 'post' ? (
-                    <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 13, marginLeft: 2 }}>{sortAsc ? '\u25B2' : '\u25BC'}</Text>
-                  ) : null}
-                </View>
+                <Text style={{ fontWeight: 'bold', color: '#222', fontSize: 13, textAlign: 'center' }}>Post-test{sortColumn === 'post' ? (sortAsc ? ' ▲' : ' ▼') : ''}</Text>
               </TouchableOpacity>
               <View style={{ width: 80 }} />
             </View>
+            {/* Student list */}
             <ScrollView horizontal style={{ maxWidth: '100%' }} contentContainerStyle={{ minWidth: 340 }}>
-            <FlatList
+              <FlatList
                 data={sortedStudents}
-              keyExtractor={item => item.id}
-                style={{ marginVertical: 10, maxHeight: 400, minWidth: 340 }}
+                keyExtractor={item => item.id}
+                style={{ marginVertical: 10, maxHeight: 340, minWidth: 340 }}
                 renderItem={({ item }) => {
                   const preStatus = getStudentTestStatus(item, 'pre');
                   const postStatus = getStudentTestStatus(item, 'post');
                   const bothTaken = preStatus.taken && postStatus.taken;
                   return (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 18, marginBottom: 14, padding: 14, minWidth: 340, gap: 10, elevation: 2, shadowColor: '#27ae60', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 18, marginBottom: 14, padding: 16, minWidth: 340, gap: 10, elevation: 2, shadowColor: '#27ae60', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, justifyContent: 'space-between' }}>
                       <View style={{ flex: 1, minWidth: 90 }}>
                         <TouchableOpacity onPress={() => openModal('studentInfo', { student: item, classId: cls.id })}>
                           <Text style={{ fontWeight: 'bold', fontSize: 15, marginBottom: 2 }}>
                             <Text style={{ color: '#222', fontWeight: 'bold' }}>{item.nickname} </Text>
                             <Text style={{ color: '#0097a7', fontWeight: 'bold' }}>{postStatus.score || 0}/20</Text>
                           </Text>
-                          {/* Debug log for postScore */}
-                          {/* {console.log('ClassListModal student:', item.nickname, 'postScore:', item.postScore)} */}
                           <Text style={{ fontSize: 12, color: '#444' }}>
                             Pattern: {typeof item.postScore?.pattern === 'number' ? item.postScore.pattern : 0}, Numbers: {typeof item.postScore?.numbers === 'number' ? item.postScore.numbers : 0}
                           </Text>
@@ -1278,28 +1295,60 @@ export default function TeacherDashboard() {
                           <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>Post-test</Text>
                         </TouchableOpacity>
                       )}
-                      {/* Edit and Delete buttons remain unchanged */}
-                      <TouchableOpacity style={{ backgroundColor: '#0a7ea4', borderRadius: 8, padding: 6, marginRight: 4 }} onPress={() => {
-                        openModal('editStudent', { student: item, classId: cls.id });
-                      }}>
-                        <MaterialIcons name="edit" size={18} color="#fff" />
-                      </TouchableOpacity>
-                      <TouchableOpacity style={{ backgroundColor: '#ff5a5a', borderRadius: 8, padding: 6 }} onPress={() => {
-                        Alert.alert('Delete Student', `Are you sure you want to delete ${item.nickname}?`, [
-                          { text: 'Cancel', style: 'cancel' },
-                          { text: 'Delete', style: 'destructive', onPress: () => {
-                            deleteStudent(item.id);
-                          } },
-                        ]);
-                      }}>
-                        <MaterialIcons name="delete" size={18} color="#fff" />
-                      </TouchableOpacity>
+                      {/* Edit and Delete buttons remain unchanged, grouped at end */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <TouchableOpacity style={{ backgroundColor: '#0a7ea4', borderRadius: 8, padding: 6, marginRight: 2 }} onPress={() => {
+                          openModal('editStudent', { student: item, classId: cls.id });
+                        }}>
+                          <MaterialIcons name="edit" size={18} color="#fff" />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={{ backgroundColor: '#ff5a5a', borderRadius: 8, padding: 6 }} onPress={() => {
+                          Alert.alert('Delete Student', `Are you sure you want to delete ${item.nickname}?`, [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Delete', style: 'destructive', onPress: () => {
+                              deleteStudent(item.id);
+                            } },
+                          ]);
+                        }}>
+                          <MaterialIcons name="delete" size={18} color="#fff" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   );
                 }}
               />
             </ScrollView>
-            <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
+            {/* Floating Add Student Button (FAB) at bottom right */}
+            <TouchableOpacity
+              onPress={() => openModal('addStudent', { classId: cls.id })}
+              style={{
+                position: 'absolute',
+                right: 24,
+                bottom: 70,
+                backgroundColor: '#27ae60',
+                borderRadius: 32,
+                width: 56,
+                height: 56,
+                alignItems: 'center',
+                justifyContent: 'center',
+                elevation: 6,
+                shadowColor: '#27ae60',
+                shadowOpacity: 0.18,
+                shadowRadius: 10,
+                shadowOffset: { width: 0, height: 2 },
+                zIndex: 20,
+              }}
+              activeOpacity={0.85}
+              onLongPress={() => Alert.alert('Add Student', 'Add a new student to this class.')}
+            >
+              <MaterialIcons name="person-add" size={32} color="#fff" />
+            </TouchableOpacity>
+            {/* Fixed Close button at bottom */}
+            <View style={{ position: 'absolute', bottom: 10, left: 0, right: 0, alignItems: 'center', zIndex: 10 }}>
+              <Pressable style={{ backgroundColor: '#27ae60', borderRadius: 18, minWidth: 160, paddingVertical: 12, alignSelf: 'center', elevation: 2, shadowColor: '#27ae60', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }} onPress={closeModal}>
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>Close</Text>
+              </Pressable>
+            </View>
           </View>
         );
       case 'parentList':
@@ -1483,10 +1532,7 @@ export default function TeacherDashboard() {
             Alert.alert('Error', 'Failed to send announcement.');
           }
         };
-        // Auto-select class if only one class exists and selectedClassId is not set
-        if (modalType === 'announce' && classes.length === 1 && !selectedClassId) {
-          setSelectedClassId(classes[0].id);
-        }
+        // Remove the auto-select logic from here - it's now in useEffect
         return (
           <View style={styles.modalBox}>
             <Text style={styles.modalTitle}>Send Announcement</Text>
@@ -1706,7 +1752,7 @@ export default function TeacherDashboard() {
             keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
           >
             <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }} keyboardShouldPersistTaps="handled">
-              <View style={[styles.modalBox, { backgroundColor: '#f8f9fa', paddingTop: 18, paddingBottom: 10 }]}> 
+              <View style={[styles.modalBox, { backgroundColor: '#f8f9fa', paddingTop: 18, paddingBottom: 10, alignItems: 'stretch', minHeight: 520, justifyContent: 'flex-start', position: 'relative' }]}> 
                 {/* Student Info Card */}
                 <View style={{ backgroundColor: '#f3f6f8', borderRadius: 14, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e0e6ea', alignItems: 'flex-start' }}>
                   <Text style={{ fontWeight: '600', color: '#27ae60', fontSize: 15, marginBottom: 2 }}>Student: <Text style={{ color: '#222', fontWeight: 'bold' }}>{evalStudent.nickname}</Text></Text>
@@ -1753,7 +1799,7 @@ export default function TeacherDashboard() {
                 <View style={{ height: 1, backgroundColor: '#e0e6ea', marginVertical: 8, width: '110%', alignSelf: 'center' }} />
                 {/* Evaluation Textbox Section */}
                 <Text style={{ fontWeight: '500', color: '#27ae60', fontSize: 14, marginBottom: 4, marginLeft: 2 }}>Message to Parent</Text>
-                <View style={{ position: 'relative', marginBottom: 18 }}>
+                <View style={{ position: 'relative', marginBottom: 18, minHeight: 220, justifyContent: 'flex-start' }}>
                   <TextInput
                     style={[
                       styles.modalInput,
@@ -1794,6 +1840,9 @@ export default function TeacherDashboard() {
                       shadowOffset: { width: 0, height: 2 },
                       flexDirection: 'row',
                       alignItems: 'center',
+                      minWidth: 44,
+                      minHeight: 36,
+                      justifyContent: 'center',
                     }}
                     onPress={async () => {
                       if (evaluationParentTasksLoading || !evaluationData) return;
@@ -1839,13 +1888,47 @@ export default function TeacherDashboard() {
                       <ActivityIndicator size="small" color="#27ae60" style={{ marginLeft: 6 }} />
                     )}
                   </TouchableOpacity>
+                  {/* Loading overlay, centered and matching modal size */}
+                  {ghostLoading && (
+                    <View style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      zIndex: 30,
+                      borderRadius: 22,
+                      width: '100%',
+                      height: '100%',
+                      backgroundColor: 'rgba(255,255,255,0.85)',
+                      transitionProperty: 'opacity',
+                      transitionDuration: '300ms',
+                      opacity: ghostLoading ? 1 : 0,
+                    }}>
+                      <View style={{
+                        backgroundColor: 'rgba(255,255,255,0.97)',
+                        borderRadius: 22,
+                        paddingVertical: 38,
+                        paddingHorizontal: 38,
+                        minWidth: 270,
+                        maxWidth: 340,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        shadowColor: '#27ae60',
+                        shadowOpacity: 0.13,
+                        shadowRadius: 16,
+                        shadowOffset: { width: 0, height: 4 },
+                      }}>
+                        <ActivityIndicator size="large" color="#27ae60" />
+                        <Text style={{ color: '#27ae60', fontWeight: '600', fontSize: 18, marginTop: 22, textAlign: 'center', maxWidth: 300, lineHeight: 26 }}>
+                          {ghostLoadingStatements[ghostLoadingStatementIdx]}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
                 </View>
-                {/* Show loading spinner in textbox if generating */}
-                {ghostLoading && (
-                  <View style={{ position: 'absolute', left: 0, right: 0, top: 60, alignItems: 'center', zIndex: 20 }}>
-                    <ActivityIndicator size="large" color="#27ae60" />
-                  </View>
-                )}
                 {/* Action Buttons */}
                 <View style={[styles.modalBtnRow, { marginTop: 2 }]}> 
                   <Pressable style={[styles.modalBtn, { backgroundColor: 'transparent', elevation: 0 }]} onPress={closeModal}><Text style={{ color: '#888', fontWeight: 'bold', fontSize: 15 }}>Cancel</Text></Pressable>
