@@ -132,7 +132,6 @@ const styles = StyleSheet.create({
     marginVertical: 10,
     width: '100%',
     maxWidth: 320,
-    alignItems: 'center',
     elevation: 3,
     shadowColor: '#27ae60',
     shadowOffset: { width: 0, height: 2 },

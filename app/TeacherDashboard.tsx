@@ -3,11 +3,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Audio } from 'expo-av';
 import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { get, onValue, ref, remove, set } from 'firebase/database';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { G, Path, Svg } from 'react-native-svg';
 import { auth, db } from '../constants/firebaseConfig';
 
@@ -40,12 +39,12 @@ type ModalType = 'addClass' | 'addStudent' | 'announce' | 'category' | 'taskInfo
 // Helper: Compute performance distribution for pre/post test
 function getPerformanceDistribution(students: Student[] = [], type: 'pre' | 'post') {
   const categories = [
-    { label: 'Not yet taken', color: '#bbb' },
-    { label: 'Intervention', color: '#ff5a5a' },
-    { label: 'Consolidation', color: '#ffb37b' },
-    { label: 'Enhancement', color: '#ffe066' },
-    { label: 'Proficient', color: '#7ed957' },
-    { label: 'Highly Proficient', color: '#27ae60' },
+    { label: 'Not yet taken', color: '#c0c0c0' },
+    { label: 'Intervention', color: '#e6f4ea' },      // red
+    { label: 'Consolidation', color: '#c2e8cd' },    // peach/orange
+    { label: 'Enhancement', color: '#a0d9b5' },      // yellow
+    { label: 'Proficient', color: '#7ccc98' },       // light green
+    { label: 'Highly Proficient', color: '#5bbd7d' },// main green
   ];
   // Count students in each category
   const counts = [0, 0, 0, 0, 0, 0];
@@ -191,6 +190,10 @@ export default function TeacherDashboard() {
     'Summarizing student performance...'
   ];
   const [ghostLoadingStatementIdx, setGhostLoadingStatementIdx] = useState(0);
+  // Add state for hamburger menu
+  const [openMenuClassId, setOpenMenuClassId] = useState<string | null>(null);
+  // Add state for profile menu
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   // Place all useEffect hooks here, after all useState hooks
   useEffect(() => {
@@ -230,12 +233,12 @@ export default function TeacherDashboard() {
 
   // Use theme-matching harmonious colors for the chart
   const defaultCategories = [
-    { label: 'Not yet taken', color: '#bbb' },
-    { label: 'Intervention', color: '#ff5a5a' },      // red
-    { label: 'Consolidation', color: '#ffb37b' },    // peach/orange
-    { label: 'Enhancement', color: '#ffe066' },      // yellow
-    { label: 'Proficient', color: '#7ed957' },       // light green
-    { label: 'Highly Proficient', color: '#27ae60' },// main green
+    { label: 'Not yet taken', color: '#c0c0c0' },
+    { label: 'Intervention', color: '#e6f4ea' },      // red
+    { label: 'Consolidation', color: '#c2e8cd' },    // peach/orange
+    { label: 'Enhancement', color: '#a0d9b5' },      // yellow
+    { label: 'Proficient', color: '#7ccc98' },       // light green
+    { label: 'Highly Proficient', color: '#5bbd7d' },// main green
   ];
 
   // Load current teacher and their data
@@ -928,16 +931,27 @@ export default function TeacherDashboard() {
                   <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0097a7' }}>{cls.students?.length || 0}</Text>
                 </View>
               </TouchableOpacity>
-              {/* Parent List Button */}
-              <TouchableOpacity onPress={() => openModal('parentList', { classId: cls.id })} style={{ backgroundColor: '#ffe066', borderRadius: 20, padding: 6, alignItems: 'center', justifyContent: 'center', elevation: 2, shadowColor: '#ffe066', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
-                <MaterialIcons name="family-restroom" size={22} color="#b8860b" />
+              {/* Hamburger Menu Button */}
+              <TouchableOpacity onPress={() => setOpenMenuClassId(openMenuClassId === cls.id ? null : cls.id)} style={{ backgroundColor: '#eee', borderRadius: 20, padding: 6, alignItems: 'center', justifyContent: 'center', elevation: 2, maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
+                <MaterialCommunityIcons name="dots-vertical" size={22} color="#888" />
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => openModal('announce', { classId: cls.id })} style={{ backgroundColor: '#0097a7', borderRadius: 20, padding: 6, alignItems: 'center', justifyContent: 'center', elevation: 2, shadowColor: '#0097a7', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
-                <MaterialIcons name="campaign" size={22} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleDeleteClass} style={{ backgroundColor: '#ffeaea', borderRadius: 20, padding: 6, alignItems: 'center', justifyContent: 'center', elevation: 2, shadowColor: '#ff5a5a', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, maxWidth: 48, minWidth: 0, marginHorizontal: 1 }}>
-                <MaterialIcons name="delete" size={22} color="#ff5a5a" />
-              </TouchableOpacity>
+              {/* Dropdown Menu */}
+              {openMenuClassId === cls.id && (
+                <View style={{ position: 'absolute', top: 44, right: 0, backgroundColor: '#fff', borderRadius: 12, elevation: 6, shadowColor: '#000', shadowOpacity: 0.13, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, minWidth: 160, zIndex: 100 }}>
+                  <TouchableOpacity onPress={() => { setOpenMenuClassId(null); openModal('parentList', { classId: cls.id }); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderColor: '#f0f0f0' }}>
+                    <MaterialIcons name="family-restroom" size={22} color="#b8860b" style={{ marginRight: 10 }} />
+                    <Text style={{ color: '#b8860b', fontWeight: 'bold', fontSize: 15 }}>Parent List</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setOpenMenuClassId(null); openModal('announce', { classId: cls.id }); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: 1, borderColor: '#f0f0f0' }}>
+                    <MaterialIcons name="campaign" size={22} color="#0097a7" style={{ marginRight: 10 }} />
+                    <Text style={{ color: '#0097a7', fontWeight: 'bold', fontSize: 15 }}>Announce</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setOpenMenuClassId(null); handleDeleteClass(); }} style={{ flexDirection: 'row', alignItems: 'center', padding: 14 }}>
+                    <MaterialIcons name="delete" size={22} color="#ff5a5a" style={{ marginRight: 10 }} />
+                    <Text style={{ color: '#ff5a5a', fontWeight: 'bold', fontSize: 15 }}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </View>
           <View style={{ marginTop: isSmall ? 8 : 16 }}>
@@ -1344,9 +1358,9 @@ export default function TeacherDashboard() {
               <MaterialIcons name="person-add" size={32} color="#fff" />
             </TouchableOpacity>
             {/* Fixed Close button at bottom */}
-            <View style={{ position: 'absolute', bottom: 10, left: 0, right: 0, alignItems: 'center', zIndex: 10 }}>
-              <Pressable style={{ backgroundColor: '#27ae60', borderRadius: 18, minWidth: 160, paddingVertical: 12, alignSelf: 'center', elevation: 2, shadowColor: '#27ae60', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }} onPress={closeModal}>
-                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>Close</Text>
+            <View style={{ position: 'absolute', bottom: 10, left: 0, right: 0, alignItems: 'center', zIndex: 10, marginBottom: 8 }}>
+              <Pressable style={{ backgroundColor: '#27ae60', borderRadius: 18, minWidth: 160, paddingVertical: 9, alignSelf: 'center', elevation: 2, shadowColor: '#27ae60', shadowOpacity: 0.10, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }} onPress={closeModal}>
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 14, textAlign: 'center' }}>Close</Text>
               </Pressable>
             </View>
           </View>
@@ -2036,40 +2050,38 @@ export default function TeacherDashboard() {
       <ImageBackground source={bgImage} style={styles.bg} imageStyle={{ opacity: 0.13, resizeMode: 'cover' }}>
         {/* Overlay for better blending (non-blocking) */}
         <View style={styles.bgOverlay} />
-        <SafeAreaView style={{ flex: 1 }}>
-          <ScrollView contentContainerStyle={styles.scrollContent}>
-            <View style={styles.mainContainer}>
-              <View style={styles.headerWrap}>
-                <View style={styles.headerRow}>
-                  <View>
-                    <Text style={styles.welcome}>Welcome,</Text>
-                    <Text style={styles.teacherName}>Teacher {teacherName}</Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <TouchableOpacity style={styles.profileBtn}>
-                      <MaterialCommunityIcons name="account-circle" size={38} color="#27ae60" />
-                    </TouchableOpacity>
-                  </View>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.mainContainer}>
+            <View style={styles.headerWrap}>
+              <View style={styles.headerRow}>
+                <View>
+                  <Text style={styles.welcome}>Welcome,</Text>
+                  <Text style={styles.teacherName}>Teacher {teacherName}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TouchableOpacity style={styles.profileBtn} onPress={() => setShowProfileMenu(!showProfileMenu)}>
+                    <MaterialCommunityIcons name="account-circle" size={38} color="#27ae60" />
+                  </TouchableOpacity>
                 </View>
               </View>
-              <View style={dashboardCardStyle}>
-                {/* Title and Add Class in a single row */}
-                <View style={styles.dashboardHeaderRow}>
-                  <Text style={styles.dashboardTitle}>Classrooms</Text>
-                  <TouchableOpacity style={styles.addClassBtn} onPress={() => openModal('addClass')}>
-                    <Text style={styles.addClassBtnText}>Add Class</Text>
-                  </TouchableOpacity>
-              </View>
-                <View style={{ height: 8 }} />
-                {classes.map(cls => (
-                  <React.Fragment key={cls.id}>
-                    {renderClassPanel(cls)}
-                  </React.Fragment>
-                ))}
-              </View>
             </View>
-          </ScrollView>
-        </SafeAreaView>
+            <View style={dashboardCardStyle}>
+              {/* Title and Add Class in a single row */}
+              <View style={styles.dashboardHeaderRow}>
+                <Text style={styles.dashboardTitle}>Classrooms</Text>
+                <TouchableOpacity style={styles.addClassBtn} onPress={() => openModal('addClass')}>
+                  <Text style={styles.addClassBtnText}>Add Class</Text>
+                </TouchableOpacity>
+            </View>
+              <View style={{ height: 8 }} />
+              {classes.map(cls => (
+                <React.Fragment key={cls.id}>
+                  {renderClassPanel(cls)}
+                </React.Fragment>
+              ))}
+            </View>
+          </View>
+        </ScrollView>
         {/* Modal for all actions */}
         <Modal
           visible={modalVisible}
@@ -2082,6 +2094,46 @@ export default function TeacherDashboard() {
           </View>
         </Modal>
       </ImageBackground>
+      {showProfileMenu && (
+        <>
+          {/* Overlay to close menu when clicking outside */}
+          <TouchableOpacity
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }}
+            activeOpacity={1}
+            onPress={() => setShowProfileMenu(false)}
+          />
+          <View style={{
+            position: 'absolute',
+            top: 56, // adjust as needed to match the icon position
+            right: 24, // adjust as needed to match the icon position
+            backgroundColor: '#fff',
+            borderRadius: 12,
+            elevation: 20,
+            shadowColor: '#000',
+            shadowOpacity: 0.18,
+            shadowRadius: 16,
+            shadowOffset: { width: 0, height: 4 },
+            minWidth: 140,
+            zIndex: 10000
+          }}>
+            <TouchableOpacity
+              onPress={async () => {
+                setShowProfileMenu(false);
+                try {
+                  await signOut(auth);
+                  window.location.reload();
+                } catch (err) {
+                  Alert.alert('Error', 'Failed to log out.');
+                }
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', padding: 16 }}
+            >
+              <MaterialIcons name="logout" size={22} color="#ff5a5a" style={{ marginRight: 10 }} />
+              <Text style={{ color: '#ff5a5a', fontWeight: 'bold', fontSize: 17 }}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
     </View>
   );
 }

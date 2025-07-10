@@ -3,7 +3,7 @@ import { BlurView } from 'expo-blur';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { get, onValue, ref, set } from 'firebase/database';
 import React, { useEffect, useState } from 'react';
-import { Alert, Dimensions, ImageBackground, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Dimensions, ImageBackground, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { db } from '../constants/firebaseConfig';
 const bgImage = require('../assets/images/bg.jpg');
 
@@ -174,6 +174,62 @@ const generateTaskRecommendations = (patternScore: number, numbersScore: number,
   return tasks;
 };
 
+// Add GPT API function after the fetchWithRetry helper
+const askGpt = async (prompt: string): Promise<string> => {
+  const response = await fetch('https://mathtatag-api.onrender.com/gpt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+
+  if (!response.ok) {
+    let error, text;
+    try {
+      error = await response.json();
+    } catch {
+      error = {};
+    }
+    try {
+      text = await response.text();
+    } catch {
+      text = '';
+    }
+    throw new Error((error.error || text || 'Unknown error') + (error.details ? ('\nDetails: ' + error.details) : ''));
+  }
+
+  const result = await response.json();
+  return result.response;
+};
+
+const generateRevisedTaskPrompt = ({
+  taskTitle,
+  taskDetails,
+  taskObjective,
+  reasonForChange
+}: {
+  taskTitle: string;
+  taskDetails: string;
+  taskObjective: string;
+  reasonForChange: string;
+}) => {
+  return `Ikaw ay isang guro na nagbibigay ng home-based learning task para sa isang batang nasa Grade 1. Narito ang orihinal na task na ibinigay:
+
+• Pamagat: ${taskTitle}  
+• Detalye: ${taskDetails}  
+• Layunin: ${taskObjective}  
+
+Gayunpaman, nais ng magulang na baguhin ang task na ito dahil: "${reasonForChange}"
+
+Mangyaring magmungkahi ng alternatibong gawain na katulad pa rin sa layunin at konsepto ng orihinal na task, ngunit naka-adjust base sa ibinigay na dahilan.  
+
+Sagutin sa ganitong format:
+Pamagat: [bagong pamagat]
+Detalye: [bagong detalye ng gawain]
+Layunin: [bagong layunin]
+
+Gamitin ang wika ng isang gurong malinaw at gabay ang tono. huwag mag bold o kahit anong design sa text. hindi na kailangang bumati`;
+};
+
 export default function ParentDashboard() {
   const router = useRouter();
   const { parentId, needsSetup } = useLocalSearchParams();
@@ -204,6 +260,9 @@ export default function ParentDashboard() {
   // Add state for evaluation modal
   const [showEvaluationModal, setShowEvaluationModal] = useState(false);
   const [lastSeenEvaluationTimestamp, setLastSeenEvaluationTimestamp] = useState<string | null>(null);
+  // Add state for GPT task change
+  const [gptLoading, setGptLoading] = useState(false);
+  const [revisedTask, setRevisedTask] = useState<any>(null);
 
   React.useEffect(() => {
     if (!parentId) return;
@@ -497,17 +556,128 @@ export default function ParentDashboard() {
     );
   };
 
-  // Handle submit reason
-  const handleSubmitChangeReason = () => {
+  // Handle submit reason - Updated to use GPT API
+  const handleSubmitChangeReason = async () => {
     let reason = changeReason;
     if (changeReason === 'Other') {
       reason = changeReasonOther;
     }
+    
+    if (!reason || (changeReason === 'Other' && !changeReasonOther)) {
+      Alert.alert('Error', 'Please provide a reason for the change.');
+      return;
+    }
+
+    if (changeTaskIdx === null) {
+      Alert.alert('Error', 'No task selected for change.');
+      return;
+    }
+
+    const task = tasks[changeTaskIdx];
+    setGptLoading(true);
+
+    try {
+      const prompt = generateRevisedTaskPrompt({
+        taskTitle: task.title,
+        taskDetails: task.details || '',
+        taskObjective: task.objective || '',
+        reasonForChange: reason,
+      });
+
+      const response = await askGpt(prompt);
+      console.log('GPT Response:', response);
+      
+      // Parse the response to extract title, details, and objective
+      const lines = response.split('\n').filter(line => line.trim());
+      let newTitle = '';
+      let newDetails = '';
+      let newObjective = '';
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.includes('Pamagat:') || line.includes('Title:')) {
+          newTitle = line.split(':')[1]?.trim() || '';
+        } else if (line.includes('Detalye:') || line.includes('Details:')) {
+          newDetails = line.split(':')[1]?.trim() || '';
+        } else if (line.includes('Layunin:') || line.includes('Objective:')) {
+          newObjective = line.split(':')[1]?.trim() || '';
+        }
+      }
+
+      // If we couldn't parse structured response, try to extract from the response
+      if (!newTitle && !newDetails && !newObjective) {
+        // Try to find the first line as title and rest as details
+        const responseLines = response.split('\n').filter(line => line.trim());
+        if (responseLines.length > 0) {
+          newTitle = responseLines[0].trim();
+          newDetails = responseLines.slice(1).join('\n').trim();
+          newObjective = task.objective || '';
+        } else {
+          // Fallback: use the whole response as details
+          newDetails = response;
+          newTitle = task.title + ' (Revised)';
+          newObjective = task.objective || '';
+        }
+      }
+
+      console.log('Parsed values:', { newTitle, newDetails, newObjective });
+      
+      setRevisedTask({
+        title: newTitle || task.title + ' (Revised)',
+        details: newDetails || task.details || '',
+        objective: newObjective || task.objective || '',
+        originalTask: task,
+        reason: reason,
+      });
+
+    } catch (err: any) {
+      console.error('GPT API Error:', err);
+      Alert.alert('Error', 'Failed to generate revised task. Please try again.');
+    } finally {
+      setGptLoading(false);
+    }
+  };
+
+  // Handle applying the revised task
+  const handleApplyRevisedTask = async () => {
+    if (!revisedTask || changeTaskIdx === null) return;
+
+    try {
+      const newTasks = [...tasks];
+      newTasks[changeTaskIdx] = {
+        ...newTasks[changeTaskIdx],
+        title: revisedTask.title,
+        details: revisedTask.details,
+        objective: revisedTask.objective,
+        // Reset ratings since it's a new task
+        preRating: null,
+        postRating: null,
+        status: 'notdone',
+        assessmentScore: {
+          Preassessment: null,
+          Postassessment: null,
+        },
+      };
+
+      setTasks(newTasks);
+
+      // Save to Firebase
+      if (parentData?.parentId) {
+        const parentTasksRef = ref(db, `Parents/${parentData.parentId}/tasks`);
+        await set(parentTasksRef, newTasks);
+      }
+
+      Alert.alert('Success', 'Task has been updated successfully!');
     setChangeModalVisible(false);
     setChangeReason('');
     setChangeReasonOther('');
     setChangeTaskIdx(null);
-    Alert.alert('Change Requested', `Reason: ${reason}`);
+      setRevisedTask(null);
+
+    } catch (err) {
+      console.error('Failed to update task:', err);
+      Alert.alert('Error', 'Failed to update task in database.');
+    }
   };
 
   // Handle rating modal submit
@@ -584,6 +754,91 @@ export default function ParentDashboard() {
       <Text key={i} style={{ color: '#FFD600', fontSize: 15, marginRight: 1 }}>{i < count ? '★' : '☆'}</Text>
     );
   };
+
+  // Move _styles into StyleSheet.create for type safety
+  const _modalStyles = StyleSheet.create({
+    buttonRow: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: '100%',
+      marginTop: 18,
+      marginBottom: 2,
+      gap: 0,
+    },
+    modalActionBtn: {
+      flex: 1,
+      borderRadius: 8,
+      paddingVertical: 6,
+      marginHorizontal: 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 0,
+      flexShrink: 1,
+      maxWidth: 120,
+    },
+    modalActionBtnApply: {
+      backgroundColor: '#27ae60',
+    },
+    modalActionBtnTryAgain: {
+      backgroundColor: '#bbb',
+    },
+    modalActionBtnCancel: {
+      backgroundColor: '#ff5a5a',
+    },
+    modalActionBtnText: {
+      color: '#fff',
+      fontWeight: 'bold',
+      fontSize: 12,
+      letterSpacing: 0.1,
+    },
+  });
+
+  // Tagalog labels for reasons
+  const reasonLabels = {
+    Time: 'Oras',
+    Resources: 'Kakulangan sa Gamit',
+    Other: 'Iba Pa',
+  };
+
+  // Add new styles for the horizontal button row and improved buttons
+  const modalActionStyles = StyleSheet.create({
+    actionRow: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      width: '100%',
+      marginTop: 28,
+      marginBottom: 4,
+    },
+    actionBtn: {
+      flex: 1,
+      borderRadius: 22,
+      paddingVertical: 13,
+      marginHorizontal: 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 0,
+      flexShrink: 1,
+      shadowColor: '#000',
+      shadowOpacity: 0.07,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 2,
+    },
+    actionBtnGreen: {
+      backgroundColor: '#27ae60',
+    },
+    actionBtnGray: {
+      backgroundColor: '#bbb',
+    },
+    actionBtnText: {
+      color: '#fff',
+      fontWeight: 'bold' as const,
+      fontSize: 16,
+      letterSpacing: 0.1,
+    },
+  });
 
   return (
     <ImageBackground source={bgImage} style={styles.bg} imageStyle={{ opacity: 0.13, resizeMode: 'cover' }}>
@@ -862,63 +1117,132 @@ export default function ParentDashboard() {
           onRequestClose={() => setChangeModalVisible(false)}
         >
           <BlurView intensity={60} tint="light" style={styles.modalBlur}>
-            <View style={styles.modalCenterWrap}>
-              <View style={styles.modalAnnouncementBox}>
-                <Text style={{ fontWeight: 'bold', fontSize: 18, marginBottom: 10 }}>Reason for Change</Text>
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', width: '100%' }}>
+              <View style={[styles.modalAnnouncementBox, {
+                width: 350,
+                maxWidth: '90%',
+                paddingVertical: 32,
+                paddingHorizontal: 20,
+                alignItems: 'center',
+                justifyContent: 'flex-start',
+                shadowColor: '#000',
+                shadowOpacity: 0.13,
+                shadowRadius: 18,
+                shadowOffset: { width: 0, height: 8 },
+                elevation: 8,
+                backgroundColor: 'rgba(255,255,255,0.98)',
+                borderRadius: 26,
+              }]}
+              >
+                {gptLoading ? (
+                  <View style={{ width: 260, maxWidth: '90%', paddingVertical: 36, paddingHorizontal: 18, backgroundColor: '#fff', borderRadius: 22, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8 }}>
+                    <ActivityIndicator size="large" color="#27ae60" style={{ marginBottom: 22 }} />
+                    <Text style={{ color: '#2ecc40', fontWeight: 'bold', fontSize: 18, textAlign: 'center', marginTop: 0 }}>Gumagawa ng bagong gawain...</Text>
+                  </View>
+                ) : revisedTask ? (
+                  <Animated.View style={{ width: '100%', alignItems: 'center', opacity: 1 }}>
+                    <Text style={{ fontWeight: 'bold', fontSize: 22, marginBottom: 12, color: '#27ae60', textAlign: 'center' }}>Bagong Gawain</Text>
+                    <View style={{ backgroundColor: '#f8f9fa', borderRadius: 14, padding: 18, marginBottom: 22, maxHeight: 260, minHeight: 120, width: '100%' }}>
+                      <ScrollView showsVerticalScrollIndicator={true} style={{ marginBottom: 12 }}>
+                        <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222', marginBottom: 8 }}>Original Task:</Text>
+                        <Text style={{ fontSize: 15, color: '#666', marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Title:</Text> {revisedTask.originalTask.title}</Text>
+                        <Text style={{ fontSize: 15, color: '#666', marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Details:</Text> {revisedTask.originalTask.details}</Text>
+                        <Text style={{ fontSize: 15, color: '#666', marginBottom: 8 }}><Text style={{ fontWeight: 'bold' }}>Objective:</Text> {revisedTask.originalTask.objective}</Text>
+                        <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222', marginTop: 12, marginBottom: 8 }}>Dahilan:</Text>
+                        <Text style={{ fontSize: 15, color: '#666', marginBottom: 12 }}>{revisedTask.reason}</Text>
+                        <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#27ae60', marginBottom: 8 }}>Bagong Task:</Text>
+                        <Text style={{ fontSize: 15, color: '#222', marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Title:</Text> {revisedTask.title}</Text>
+                        <Text style={{ fontSize: 15, color: '#222', marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Details:</Text> {revisedTask.details}</Text>
+                        <Text style={{ fontSize: 15, color: '#222', marginBottom: 4 }}><Text style={{ fontWeight: 'bold' }}>Objective:</Text> {revisedTask.objective}</Text>
+                      </ScrollView>
+                    </View>
+                    <View style={[_modalStyles.buttonRow, { marginTop: 10 }]}> 
+                      <Pressable
+                        style={[_modalStyles.modalActionBtn, _modalStyles.modalActionBtnApply]}
+                        onPress={handleApplyRevisedTask}
+                      >
+                        <Text style={_modalStyles.modalActionBtnText}>Gamitin</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[_modalStyles.modalActionBtn, _modalStyles.modalActionBtnTryAgain]}
+                        onPress={() => {
+                          setRevisedTask(null);
+                          setChangeReason('');
+                          setChangeReasonOther('');
+                        }}
+                      >
+                        <Text style={_modalStyles.modalActionBtnText}>Subukan Muli</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[_modalStyles.modalActionBtn, _modalStyles.modalActionBtnCancel]}
+                        onPress={() => {
+                          setChangeModalVisible(false);
+                          setRevisedTask(null);
+                          setChangeReason('');
+                          setChangeReasonOther('');
+                          setChangeTaskIdx(null);
+                        }}
+                      >
+                        <Text style={_modalStyles.modalActionBtnText}>Kanselahin</Text>
+                      </Pressable>
+                    </View>
+                  </Animated.View>
+                ) : (
+                  // Reason selection UI
+                  <>
+                    <Text style={{ fontWeight: 'bold', fontSize: 20, marginBottom: 10, color: '#222', textAlign: 'center', alignSelf: 'center' }}>Dahilan ng Pagbabago</Text>
                 <TouchableOpacity
-                  style={[styles.reasonOption, changeReason === 'Time' && styles.reasonOptionSelected]}
+                      style={[styles.reasonOption, changeReason === 'Time' && styles.reasonOptionSelected, { alignSelf: 'center' }]}
                   onPress={() => setChangeReason('Time')}
                 >
-                  <Text style={styles.reasonOptionText}>Time</Text>
+                      <Text style={[styles.reasonOptionText, { textAlign: 'center' }]}>{reasonLabels.Time}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.reasonOption, changeReason === 'Resources' && styles.reasonOptionSelected]}
+                      style={[styles.reasonOption, changeReason === 'Resources' && styles.reasonOptionSelected, { alignSelf: 'center' }]}
                   onPress={() => setChangeReason('Resources')}
                 >
-                  <Text style={styles.reasonOptionText}>Resources</Text>
+                      <Text style={[styles.reasonOptionText, { textAlign: 'center' }]}>{reasonLabels.Resources}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.reasonOption, changeReason === 'Other' && styles.reasonOptionSelected]}
+                      style={[styles.reasonOption, changeReason === 'Other' && styles.reasonOptionSelected, { alignSelf: 'center' }]}
                   onPress={() => setChangeReason('Other')}
                 >
-                  <Text style={styles.reasonOptionText}>Other</Text>
+                      <Text style={[styles.reasonOptionText, { textAlign: 'center' }]}>{reasonLabels.Other}</Text>
                 </TouchableOpacity>
                 {changeReason === 'Other' && (
-                  <View style={{ marginTop: 10, width: '100%' }}>
-                    <Text style={{ fontSize: 14, color: '#222', marginBottom: 4 }}>Please specify:</Text>
-                    <View style={{ backgroundColor: '#f3f3f3', borderRadius: 8, padding: 6 }}>
-                      <Text
-                        style={{ minHeight: 32, fontSize: 15, color: '#222' }}
-                        numberOfLines={3}
-                        ellipsizeMode="tail"
-                      >
-                        {/* This is a placeholder for a TextInput, but since TextInput is not imported, use Alert for now. */}
-                      </Text>
+                      <View style={{ marginTop: 10, width: '100%', alignItems: 'center' }}>
+                        <Text style={{ fontSize: 15, color: '#222', marginBottom: 4, textAlign: 'center', alignSelf: 'center' }}>Ilagay ang iyong dahilan:</Text>
+                        <View style={{ backgroundColor: '#f3f3f3', borderRadius: 8, padding: 6, width: '100%' }}>
+                          <TextInput
+                            style={{ minHeight: 32, fontSize: 15, color: '#222', padding: 4, textAlign: 'center' }}
+                            placeholder="I-type ang iyong dahilan dito..."
+                            value={changeReasonOther}
+                            onChangeText={setChangeReasonOther}
+                            multiline
+                          />
                     </View>
-                    <TouchableOpacity
-                      style={{ marginTop: 6, alignSelf: 'flex-end' }}
-                      onPress={async () => {
-                        const input = prompt('Please specify your reason:');
-                        if (input) setChangeReasonOther(input);
-                      }}
-                    >
-                      <Text style={{ color: '#2ecc40', fontWeight: 'bold' }}>Enter Reason</Text>
-                    </TouchableOpacity>
                     {changeReasonOther ? (
-                      <Text style={{ color: '#888', marginTop: 2 }}>Entered: {changeReasonOther}</Text>
+                          <Text style={{ color: '#888', marginTop: 2, textAlign: 'center', alignSelf: 'center' }}>Nailagay: {changeReasonOther}</Text>
                     ) : null}
                   </View>
                 )}
+                    <View style={modalActionStyles.actionRow}>
                 <Pressable
-                  style={[styles.modalCloseBtn, { marginTop: 18, backgroundColor: '#2ecc40', opacity: changeReason ? 1 : 0.5 }]}
+                        style={[modalActionStyles.actionBtn, modalActionStyles.actionBtnGreen]}
                   onPress={handleSubmitChangeReason}
-                  disabled={!changeReason || (changeReason === 'Other' && !changeReasonOther)}
+                        disabled={!changeReason || (changeReason === 'Other' && !changeReasonOther) || gptLoading}
                 >
-                  <Text style={styles.modalCloseBtnText}>Submit</Text>
+                        <Text style={modalActionStyles.actionBtnText}>Palitan</Text>
                 </Pressable>
-                <Pressable style={[styles.modalCloseBtn, { marginTop: 8, backgroundColor: '#bbb' }]} onPress={() => setChangeModalVisible(false)}>
-                  <Text style={styles.modalCloseBtnText}>Cancel</Text>
+                      <Pressable
+                        style={[modalActionStyles.actionBtn, modalActionStyles.actionBtnGray]}
+                        onPress={() => setChangeModalVisible(false)}
+                      >
+                        <Text style={modalActionStyles.actionBtnText}>Kanselahin</Text>
                 </Pressable>
+                    </View>
+                  </>
+                )}
               </View>
             </View>
           </BlurView>
@@ -1061,13 +1385,22 @@ export default function ParentDashboard() {
                 </Pressable>
               </Modal>
             </View>
-            <TouchableOpacity
-              style={{ backgroundColor: '#27ae60', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 30, marginTop: 6 }}
-              onPress={handleSetupSubmit}
-              disabled={setupLoading}
-            >
-              <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{setupLoading ? 'Saving...' : 'Save'}</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', width: '100%', marginTop: 6 }}>
+              <TouchableOpacity
+                style={{ backgroundColor: '#27ae60', borderRadius: 10, paddingVertical: 10, flex: 1, alignItems: 'center', justifyContent: 'center' }}
+                onPress={handleSetupSubmit}
+                disabled={setupLoading}
+              >
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{setupLoading ? 'Saving...' : 'Save'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ backgroundColor: '#ff5a5a', borderRadius: 10, paddingVertical: 10, flex: 1, alignItems: 'center', justifyContent: 'center', marginLeft: 10, flexDirection: 'row' }}
+                onPress={() => router.replace('/RoleSelection')}
+              >
+                <MaterialIcons name="logout" size={22} color="#fff" style={{ marginRight: 8 }} />
+                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Logout</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </BlurView>
       </Modal>
@@ -1446,6 +1779,7 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     alignItems: 'flex-start',
+    paddingHorizontal: 16,
   },
   modalAnnouncementText: {
     fontSize: 16,
