@@ -196,6 +196,10 @@ export default function TeacherDashboard() {
   // Add state for profile menu
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const router = useRouter();
+  // Add state for AI Profiler
+  const [aiProfile, setAiProfile] = useState<string | null>(null);
+  const [aiProfileLoading, setAiProfileLoading] = useState(false);
+  const [aiProfileError, setAiProfileError] = useState<string | null>(null);
 
   // Place all useEffect hooks here, after all useState hooks
   useEffect(() => {
@@ -398,16 +402,69 @@ export default function TeacherDashboard() {
       if (extra?.student) {
         setSelectedStudent(extra.student);
         setParentAuthCode(null); // reset first
+        setAiProfile(null);
+        setAiProfileError(null);
+        setAiProfileLoading(true);
         if (extra.student.parentId) {
           const parentRef = ref(db, `Parents/${extra.student.parentId}`);
-          get(parentRef).then(snap => {
+          get(parentRef).then(async snap => {
             if (snap.exists()) {
               const parentData = snap.val();
               setParentAuthCode(parentData.authCode || null);
+              // Fetch parent tasks
+              let parentTasks = [];
+              try {
+                const tasksSnap = await get(ref(db, `Parents/${extra.student.parentId}/tasks`));
+                if (tasksSnap.exists()) {
+                  parentTasks = tasksSnap.val();
+                  if (!Array.isArray(parentTasks)) parentTasks = Object.values(parentTasks);
+                }
+              } catch {}
+              // Build prompt for GPT
+              const prompt = `You are an educational AI profiler. In responding dont use design in text like bold or italic, just plain. Give a very brief student profile here, just need to know what type of student and household he/she is living. Must be very brief. Here is all the information about a student and their parent:
+
+Student:
+- Name: ${extra.student.nickname}
+- Student Number: ${extra.student.studentNumber}
+- Class: ${extra.student.classId}
+- Pre-test: Pattern: ${extra.student.preScore?.pattern ?? 0}, Numbers: ${extra.student.preScore?.numbers ?? 0}, Total: ${(extra.student.preScore?.pattern ?? 0) + (extra.student.preScore?.numbers ?? 0)}/20
+- Post-test: Pattern: ${extra.student.postScore?.pattern ?? 0}, Numbers: ${extra.student.postScore?.numbers ?? 0}, Total: ${(extra.student.postScore?.pattern ?? 0) + (extra.student.postScore?.numbers ?? 0)}/20
+
+Parent:
+- Name: ${parentData.name}
+- Auth Code: ${parentData.authCode}
+- Contact: ${parentData.contact}
+- Household Income: ${parentData.householdIncome}
+- Tasks: ${parentTasks.length}
+${parentTasks.map((t: any, i: number) => `  ${i+1}. ${t.title} (Status: ${t.status}, Pre: ${t.preRating ?? '-'}, Post: ${t.postRating ?? '-'})`).join('\n')}
+
+Generate a concise, insightful AI profile for the teacher. Highlight the student's learning strengths, areas for growth, parent engagement, and any recommendations for next steps. Use a supportive, professional tone.`;
+              setAiProfileLoading(true);
+              setAiProfileError(null);
+              try {
+                const response = await askGpt(prompt);
+                setAiProfile(response);
+              } catch (err) {
+                setAiProfileError('Failed to generate AI profile.');
+                setAiProfile(null);
+              }
+              setAiProfileLoading(false);
             } else {
               setParentAuthCode(null);
+              setAiProfileError('No parent data found.');
+              setAiProfile(null);
+              setAiProfileLoading(false);
             }
-          }).catch(() => setParentAuthCode(null));
+          }).catch(() => {
+            setParentAuthCode(null);
+            setAiProfileError('No parent data found.');
+            setAiProfile(null);
+            setAiProfileLoading(false);
+          });
+        } else {
+          setAiProfileError('No parent linked.');
+          setAiProfile(null);
+          setAiProfileLoading(false);
         }
       }
     }
@@ -2012,6 +2069,13 @@ export default function TeacherDashboard() {
             </Text>
             <Text style={styles.modalStat}>Pre-test: <Text style={styles.modalStatNum}>{selectedStudent?.preScore ? String((selectedStudent.preScore.pattern ?? 0) + (selectedStudent.preScore.numbers ?? 0)) : 'N/A'}/20</Text> (Pattern: {String(selectedStudent?.preScore?.pattern ?? 0)}, Numbers: {String(selectedStudent?.preScore?.numbers ?? 0)})</Text>
             <Text style={styles.modalStat}>Post-test: <Text style={styles.modalStatNum}>{selectedStudent?.postScore ? String((selectedStudent.postScore.pattern ?? 0) + (selectedStudent.postScore.numbers ?? 0)) : 'N/A'}/20</Text> (Pattern: {String(selectedStudent?.postScore?.pattern ?? 0)}, Numbers: {String(selectedStudent?.postScore?.numbers ?? 0)})</Text>
+            {/* AI Profiler Section */}
+            <View style={{ marginTop: 16, padding: 12, backgroundColor: '#f3f6f8', borderRadius: 14, borderWidth: 1, borderColor: '#e0e6ea' }}>
+              <Text style={{ fontWeight: 'bold', color: '#6c63ff', fontSize: 15, marginBottom: 6 }}>AI Profiler</Text>
+              {aiProfileLoading && <Text style={{ color: '#888', fontStyle: 'italic' }}>Generating profile...</Text>}
+              {aiProfileError && <Text style={{ color: '#ff5a5a' }}>{aiProfileError}</Text>}
+              {aiProfile && <Text style={{ color: '#222', fontSize: 14 }}>{aiProfile}</Text>}
+            </View>
             <Pressable style={[styles.modalBtn, { alignSelf: 'center', marginTop: 10 }]} onPress={closeModal}><Text style={styles.modalBtnText}>Close</Text></Pressable>
           </View>
         );
