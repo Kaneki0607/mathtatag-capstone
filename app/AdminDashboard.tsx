@@ -28,6 +28,12 @@ type ChartData = { label: string; value: number; color: string };
 
 const bgImage = require('../assets/images/bg.jpg');
 
+function formatImprovement(value: number) {
+  if (value > 0) return `+${value}%`;
+  if (value < 0) return `-${Math.abs(value)}%`;
+  return '0%';
+}
+
 export default function AdminDashboard() {
   const [modalVisible, setModalVisible] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -422,7 +428,7 @@ export default function AdminDashboard() {
                   </View>
                   <View style={styles.statsModernItem}>
                     <MaterialIcons name="trending-up" size={32} color="#27ae60" style={styles.statsModernIcon} />
-                    <Text style={styles.statsModernValue}>+{stats.avgImprovement}%</Text>
+                    <Text style={styles.statsModernValue}>{formatImprovement(stats.avgImprovement)}</Text>
                     <Text style={styles.statsModernLabel}>Avg. Impr.</Text>
                   </View>
                 </View>
@@ -501,7 +507,7 @@ export default function AdminDashboard() {
                       { color: item.avgImprovement > 0 ? '#27ae60' : item.avgImprovement < 0 ? '#ff5a5a' : '#ffe066' },
                     ]}
                   >
-                    {(item.avgImprovement) > 0 ? '+' : ''}{item.avgImprovement}%
+                    {formatImprovement(item.avgImprovement)}
                   </Text>
                   <Text
                     style={[styles.teacherStatLabel, { maxWidth: 90, textAlign: 'center' }]}
@@ -600,11 +606,7 @@ export default function AdminDashboard() {
                       {[
                         { label: 'Classes', value: editTeacher.numClasses ?? 0, icon: 'google-classroom', color: '#27ae60' },
                         { label: 'Students', value: editTeacher.numStudents ?? 0, icon: 'account-group', color: '#27ae60' },
-                        { label: 'Avg. Improvement', value: (editTeacher.avgImprovement ?? 0) > 0
-                          ? `+${editTeacher.avgImprovement ?? 0}%`
-                          : (editTeacher.avgImprovement ?? 0) < 0
-                            ? `${editTeacher.avgImprovement ?? 0}%`
-                            : '0%', icon: 'trending-up', color: (editTeacher.avgImprovement ?? 0) > 0 ? '#27ae60' : (editTeacher.avgImprovement ?? 0) < 0 ? '#ff5a5a' : '#ffe066' }
+                        { label: 'Avg. Improvement', value: formatImprovement(editTeacher.avgImprovement ?? 0), icon: 'trending-up', color: (editTeacher.avgImprovement ?? 0) > 0 ? '#27ae60' : (editTeacher.avgImprovement ?? 0) < 0 ? '#ff5a5a' : '#ffe066' }
                       ].map((stat, idx) => (
                         <View key={stat.label + '-' + idx} style={styles.teacherStatCard}>
                           <MaterialCommunityIcons name={stat.icon as any} size={20} color={stat.color} style={{ marginBottom: 4 }} />

@@ -1,12 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Dimensions, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
+import { useDynamicAssessment } from '../hooks/useDynamicAssessment';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-// Game constants
-const TOTAL_BALLOONS = 10;
-const BALLOONS_TO_POP = 5;
 
 // Boy positioning and size (bigger, centered, slightly up)
 const boyImage = require('../assets/ElementsGame1/boy.png');
@@ -53,6 +50,9 @@ interface Game1Props {
 }
 
 export default function Game1({ onComplete }: Game1Props) {
+  // Use dynamic assessment hook
+  const { currentQuestion, loading: assessmentLoading, error: assessmentError } = useDynamicAssessment('Game1');
+  
   const [poppedBalloons, setPoppedBalloons] = useState<number[]>([]);
   const [showQuestion, setShowQuestion] = useState(false);
   const [flashColor, setFlashColor] = useState<null | 'red' | 'green'>(null);
@@ -61,11 +61,15 @@ export default function Game1({ onComplete }: Game1Props) {
   const [score, setScore] = useState(0);
   const [isWrong, setIsWrong] = useState(false);
 
+  // Get dynamic values from current question
+  const totalBalloons = currentQuestion?.totalItems || 10;
+  const balloonsToPop = currentQuestion?.itemsToRemove || 5;
+
   // Animations
-  const balloonAnims = useRef(Array.from({ length: TOTAL_BALLOONS }, () => new Animated.Value(1))).current;
-  const floatAnims = useRef(Array.from({ length: TOTAL_BALLOONS }, () => new Animated.Value(0))).current;
+  const balloonAnims = useRef(Array.from({ length: totalBalloons }, () => new Animated.Value(1))).current;
+  const floatAnims = useRef(Array.from({ length: totalBalloons }, () => new Animated.Value(0))).current;
   const boyAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnims = useRef(Array.from({ length: TOTAL_BALLOONS }, () => new Animated.Value(1))).current;
+  const scaleAnims = useRef(Array.from({ length: totalBalloons }, () => new Animated.Value(1))).current;
 
   // Start floating animations
   useEffect(() => {
@@ -85,7 +89,7 @@ export default function Game1({ onComplete }: Game1Props) {
         ])
       ).start();
     });
-  }, []);
+  }, [totalBalloons]);
 
   // Handle balloon pop
   const handleBalloonPop = (balloonIndex: number) => {
@@ -98,103 +102,105 @@ export default function Game1({ onComplete }: Game1Props) {
       useNativeDriver: true,
     }).start();
 
-    const newPopped = [...poppedBalloons, balloonIndex];
-    setPoppedBalloons(newPopped);
+    // Add to popped balloons
+    const newPoppedBalloons = [...poppedBalloons, balloonIndex];
+    setPoppedBalloons(newPoppedBalloons);
 
-    // Check if 5 balloons are popped
-    if (newPopped.length === BALLOONS_TO_POP) {
-      setShowQuestion(true); // Show question immediately
+    // Check if all balloons are popped
+    if (newPoppedBalloons.length >= balloonsToPop) {
+      setTimeout(() => {
+        setShowQuestion(true);
+      }, 800);
     }
   };
 
   // Handle answer selection
   const handleAnswer = (selectedAnswer: number) => {
-    const correctAnswer = TOTAL_BALLOONS - BALLOONS_TO_POP; // 5
-
-    if (selectedAnswer === correctAnswer) {
-      // Correct answer
-      setFlashColor('green');
-      setScore(1);
-      setTimeout(() => {
-        setFlashColor(null);
-        setShowQuestion(false);
+    if (!currentQuestion) return;
+    
+    const isCorrect = selectedAnswer === currentQuestion.correctAnswer;
+    setScore(isCorrect ? 1 : 0);
+    setIsWrong(!isCorrect);
+    setFlashColor(isCorrect ? 'green' : 'red');
+    
+    setTimeout(() => {
+      setFlashColor(null);
+      if (isCorrect) {
+        makeBoyFlyAway();
+      } else {
         setGameCompleted(true);
-        setIsWrong(false);
-        onComplete({ correct: true }); // Call here
-      }, 1000);
-    } else {
-      // Wrong answer
-      setFlashColor('red');
-      setScore(0);
-      setIsWrong(true); // Mark as wrong
-      makeBoyFlyAway();
-      setTimeout(() => {
-        setFlashColor(null);
-        setShowQuestion(false);
-        setGameCompleted(true); // Show Good Try panel
-        onComplete({ correct: false }); // Call here
-      }, 1000);
-    }
+      }
+    }, 1000);
   };
 
-  // Make boy fly away animation
+  // Make boy fly away on correct answer
   const makeBoyFlyAway = () => {
     setBoyFlying(true);
     Animated.timing(boyAnim, {
-      toValue: -SCREEN_HEIGHT,
+      toValue: -SCREEN_HEIGHT * 0.6,
       duration: 2000,
       useNativeDriver: true,
-    }).start();
+    }).start(() => {
+      setGameCompleted(true);
+    });
   };
 
-  // Render balloon cluster
+  // Render balloons
   const renderBalloons = () => (
-    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      {Array.from({ length: TOTAL_BALLOONS }).map((_, i: number) => {
+    <View style={{ position: 'absolute', left: handAnchor.x, top: handAnchor.y, zIndex: 10 }}>
+      {Array.from({ length: totalBalloons }, (_, i) => {
         if (poppedBalloons.includes(i)) return null;
-        const pos = balloonClusterPositions[i];
-        const balloonWidth = BALLOON_SIZE * pos.scale;
-        const balloonHeight = BALLOON_SIZE * pos.scale;
+        
+        const position = balloonClusterPositions[i] || balloonClusterPositions[0];
+        const floatAnim = floatAnims[i]?.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, -8],
+        }) || 0;
+        
         const handlePressIn = () => {
-          Animated.spring(scaleAnims[i], { toValue: 1.18, useNativeDriver: true }).start();
+          Animated.timing(scaleAnims[i], {
+            toValue: 0.9,
+            duration: 100,
+            useNativeDriver: true,
+          }).start();
         };
+        
         const handlePressOut = () => {
-          Animated.spring(scaleAnims[i], { toValue: 1, useNativeDriver: true }).start();
+          Animated.timing(scaleAnims[i], {
+            toValue: 1,
+            duration: 100,
+            useNativeDriver: true,
+          }).start();
         };
+
         return (
           <Animated.View
             key={i}
             style={{
               position: 'absolute',
-              left: handAnchor.x + pos.x - balloonWidth / 2,
-              top: handAnchor.y + pos.y - balloonHeight / 2,
-              width: balloonWidth,
-              height: balloonHeight,
-              zIndex: pos.z + 10,
-              opacity: balloonAnims[i].interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
+              left: position.x - BALLOON_SIZE / 2,
+              top: position.y - BALLOON_SIZE / 2,
+              zIndex: position.z,
+              opacity: balloonAnims[i],
               transform: [
-                { scale: Animated.multiply(balloonAnims[i], scaleAnims[i]) },
-                { translateY: floatAnims[i].interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) },
-                { translateX: floatAnims[i].interpolate({ inputRange: [0, 1], outputRange: [0, 5] }) },
-                ...(boyFlying ? [{ translateY: boyAnim }] : []),
+                { translateY: floatAnim },
+                { scale: scaleAnims[i] },
               ],
             }}
-            pointerEvents={poppedBalloons.includes(i) ? 'none' : 'auto'}
           >
             <TouchableOpacity
-              style={{ width: '100%', height: '100%' }}
-              onPress={() => {
-                handleBalloonPop(i);
-                handlePressOut();
-              }}
+              onPress={() => handleBalloonPop(i)}
               onPressIn={handlePressIn}
               onPressOut={handlePressOut}
-              activeOpacity={0.7}
-              disabled={boyFlying || showQuestion || poppedBalloons.includes(i) || poppedBalloons.length >= BALLOONS_TO_POP}
+              activeOpacity={0.8}
+              disabled={boyFlying}
             >
               <Image
-                source={balloonPNGs[i]}
-                style={{ width: balloonWidth, height: balloonHeight }}
+                source={balloonPNGs[i % balloonPNGs.length]}
+                style={{
+                  width: BALLOON_SIZE * position.scale,
+                  height: BALLOON_SIZE * position.scale,
+                }}
                 resizeMode="contain"
               />
             </TouchableOpacity>
@@ -204,56 +210,54 @@ export default function Game1({ onComplete }: Game1Props) {
     </View>
   );
 
-  // Render a smooth, realistic curved string from each balloon to the boy's hand
-  const renderBalloonStrings = () => {
-    if (boyFlying) return null;
-    if (poppedBalloons.length === TOTAL_BALLOONS) return null;
-    return (
-      <Svg style={StyleSheet.absoluteFill} width={SCREEN_WIDTH} height={SCREEN_HEIGHT} pointerEvents="none">
-        {Array.from({ length: TOTAL_BALLOONS }).map((_, i: number) => {
-          if (poppedBalloons.includes(i)) return null;
-          const pos = balloonClusterPositions[i];
-          const balloonCenterX = handAnchor.x + pos.x;
-          const balloonCenterY = handAnchor.y + pos.y;
-          // Control point for Bezier curve: halfway, offset upward for a gentle curve
-          const controlX = (balloonCenterX + handAnchor.x) / 2;
-          const controlY = (balloonCenterY + handAnchor.y) / 2 - 20;
-          return (
-            <Path
-              key={i}
-              d={`M${balloonCenterX},${balloonCenterY} Q${controlX},${controlY} ${handAnchor.x},${handAnchor.y}`}
-              stroke="#bbb"
-              strokeWidth={2.2}
-              opacity={0.8}
-              fill="none"
-            />
-          );
-        })}
-      </Svg>
-    );
-  };
+  // Render balloon strings
+  const renderBalloonStrings = () => (
+    <Svg style={{ position: 'absolute', left: handAnchor.x, top: handAnchor.y, zIndex: 5, width: 200, height: 300 }}>
+      {Array.from({ length: totalBalloons }, (_, i) => {
+        if (poppedBalloons.includes(i)) return null;
+        
+        const position = balloonClusterPositions[i] || balloonClusterPositions[0];
+        const stringLength = Math.abs(position.y) + 20;
+        
+        return (
+          <Path
+            key={`string-${i}`}
+            d={`M 0 0 L 0 ${stringLength}`}
+            stroke="#8B4513"
+            strokeWidth="2"
+            fill="none"
+            opacity={balloonAnims[i]}
+          />
+        );
+      })}
+    </Svg>
+  );
 
   // Render question UI
-  const renderQuestion = () => (
-    <View style={styles.questionCard}>
-      <Text style={styles.questionTitle}>How many balloons are still there?</Text>
-      <Text style={styles.vocabularyText}>
-       10 - 5 = ?
-      </Text>
-      <View style={styles.answerOptions}>
-        {[3, 5, 7].map((option: number) => (
-          <TouchableOpacity
-            key={option}
-            style={styles.answerButton}
-            onPress={() => handleAnswer(option)}
-            disabled={boyFlying}
-          >
-            <Text style={styles.answerButtonText}>{option}</Text>
-          </TouchableOpacity>
-        ))}
+  const renderQuestion = () => {
+    if (!currentQuestion) return null;
+    
+    return (
+      <View style={styles.questionCard}>
+        <Text style={styles.questionTitle}>{currentQuestion.question}</Text>
+        <Text style={styles.vocabularyText}>
+          {currentQuestion.equation}
+        </Text>
+        <View style={styles.answerOptions}>
+          {currentQuestion.options.map((option: number) => (
+            <TouchableOpacity
+              key={option}
+              style={styles.answerButton}
+              onPress={() => handleAnswer(option)}
+              disabled={boyFlying}
+            >
+              <Text style={styles.answerButtonText}>{option}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   // Render completion screen
   const renderCompletion = () => (
@@ -266,7 +270,9 @@ export default function Game1({ onComplete }: Game1Props) {
       ) : (
         <>
           <Text style={styles.completionTitle}>Good Try!</Text>
-          <Text style={styles.completionText}>The correct answer was 5 balloons remaining.</Text>
+          <Text style={styles.completionText}>
+            The correct answer was {currentQuestion?.correctAnswer} balloons remaining.
+          </Text>
         </>
       )}
       <TouchableOpacity style={styles.finishButton} onPress={() => onComplete({ correct: score > 0 })}>
@@ -275,14 +281,41 @@ export default function Game1({ onComplete }: Game1Props) {
     </View>
   );
 
+  // Show loading if assessment is loading
+  if (assessmentLoading) {
+    return (
+      <View style={styles.container}>
+        <Image source={require('../assets/ElementsGame1/bg1.png')} style={styles.backgroundImage} resizeMode="cover" />
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Loading game...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Show error if assessment failed to load
+  if (assessmentError || !currentQuestion) {
+    return (
+      <View style={styles.container}>
+        <Image source={require('../assets/ElementsGame1/bg1.png')} style={styles.backgroundImage} resizeMode="cover" />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>Failed to load game. Please try again.</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => window.location.reload()}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <Image source={require('../assets/ElementsGame1/bg1.png')} style={styles.backgroundImage} resizeMode="cover" />
       <View style={styles.gameUI}>
         <Text style={styles.gameTitle}>Balloons in the Sky</Text>
-        <Text style={styles.gameInstruction}>Tap 5 balloons to pop them!</Text>
-        <Text style={styles.gameStory}>A boy holds 10 balloons. 5 balloons popped.</Text>
-        <Text style={styles.progressText}>Popped: {poppedBalloons.length} / {BALLOONS_TO_POP}</Text>
+        <Text style={styles.gameInstruction}>{currentQuestion.instruction}</Text>
+        <Text style={styles.gameStory}>{currentQuestion.story}</Text>
+        <Text style={styles.progressText}>Popped: {poppedBalloons.length} / {balloonsToPop}</Text>
       </View>
       {renderBalloonStrings()}
       {renderBalloons()}
@@ -306,6 +339,39 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: '100%',
     height: '100%',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.9)',
+  },
+  loadingText: {
+    fontSize: 18,
+    color: '#3498db',
+    fontWeight: 'bold',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.9)',
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#e74c3c',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: '#3498db',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
   },
   gameUI: {
     position: 'absolute',
@@ -339,14 +405,13 @@ const styles = StyleSheet.create({
   gameStory: {
     fontSize: 16,
     color: '#7f8c8d',
-    marginBottom: 12,
+    marginBottom: 8,
     textAlign: 'center',
-    lineHeight: 22,
   },
   progressText: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#e74c3c',
+    color: '#e67e22',
   },
   boyImage: {
     position: 'absolute',
@@ -354,20 +419,20 @@ const styles = StyleSheet.create({
     top: boyY,
     width: BOY_WIDTH,
     height: BOY_HEIGHT,
-    zIndex: 30,
+    zIndex: 1,
   },
   questionCard: {
     position: 'absolute',
     top: SCREEN_HEIGHT * 0.3,
     left: 20,
     right: 20,
-    backgroundColor: 'rgba(255,255,255,0.98)',
-    borderRadius: 25,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 20,
     padding: 30,
-    zIndex: 200,
     alignItems: 'center',
+    zIndex: 200,
     shadowColor: '#000',
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.3,
     shadowRadius: 15,
     shadowOffset: { width: 0, height: 8 },
     elevation: 12,
@@ -380,9 +445,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   vocabularyText: {
-    fontSize: 16,
-    color: '#3498db',
+    fontSize: 32,
     fontWeight: 'bold',
+    color: '#3498db',
     marginBottom: 25,
     textAlign: 'center',
   },
@@ -393,16 +458,16 @@ const styles = StyleSheet.create({
   },
   answerButton: {
     backgroundColor: '#3498db',
-    borderRadius: 20,
+    borderRadius: 15,
     paddingVertical: 15,
     paddingHorizontal: 25,
     minWidth: 80,
     alignItems: 'center',
-    shadowColor: '#3498db',
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
   },
   answerButtonText: {
     color: '#fff',
@@ -411,16 +476,16 @@ const styles = StyleSheet.create({
   },
   completionCard: {
     position: 'absolute',
-    top: SCREEN_HEIGHT * 0.25,
+    top: SCREEN_HEIGHT * 0.3,
     left: 20,
     right: 20,
-    backgroundColor: 'rgba(255,255,255,0.98)',
-    borderRadius: 25,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 20,
     padding: 30,
-    zIndex: 200,
     alignItems: 'center',
+    zIndex: 200,
     shadowColor: '#000',
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.3,
     shadowRadius: 15,
     shadowOffset: { width: 0, height: 8 },
     elevation: 12,
@@ -435,15 +500,24 @@ const styles = StyleSheet.create({
   completionText: {
     fontSize: 18,
     color: '#2c3e50',
-    marginBottom: 20,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-  scoreText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#e74c3c',
     marginBottom: 25,
+    textAlign: 'center',
+  },
+  finishButton: {
+    backgroundColor: '#3498db',
+    borderRadius: 15,
+    paddingVertical: 15,
+    paddingHorizontal: 30,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  finishButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   flashOverlay: {
     position: 'absolute',
@@ -452,24 +526,5 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 300,
-  },
-  finishButton: {
-    backgroundColor: '#3498db',
-    borderRadius: 20,
-    paddingVertical: 15,
-    paddingHorizontal: 30,
-    marginTop: 18,
-    shadowColor: '#3498db',
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-    alignSelf: 'center',
-  },
-  finishButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
   },
 }); 

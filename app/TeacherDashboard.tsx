@@ -41,7 +41,7 @@ type ModalType = 'addClass' | 'addStudent' | 'announce' | 'category' | 'taskInfo
 function getPerformanceDistribution(students: Student[] = [], type: 'pre' | 'post') {
   const categories = [
     { label: 'Not yet taken', color: '#c0c0c0' },
-    { label: 'Intervention', color: '#e6f4ea' },      // red
+    { label: '7', color: '#e6f4ea' },      // red
     { label: 'Consolidation', color: '#c2e8cd' },    // peach/orange
     { label: 'Enhancement', color: '#a0d9b5' },      // yellow
     { label: 'Proficient', color: '#7ccc98' },       // light green
@@ -421,7 +421,7 @@ export default function TeacherDashboard() {
                 }
               } catch {}
               // Build prompt for GPT
-              const prompt = `You are an educational AI profiler. In responding dont use design in text like bold or italic, just plain. Give a very brief student profile here, just need to know what type of student and household he/she is living. Must be very brief. Here is all the information about a student and their parent:
+              const prompt = `You are an educational AI profiler. In responding dont use design in text like bold or italic, just plain. Give a very brief student profile here, just need to know what type of student and household he/she is living. Must be very brief one paragraph limit and dont add :. Here is all the information about a student and their parent:
 
 Student:
 - Name: ${extra.student.nickname}
