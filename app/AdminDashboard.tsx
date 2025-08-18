@@ -7,7 +7,7 @@ import { get, onValue, ref, remove, set, update } from 'firebase/database';
 import React, { useEffect, useState } from 'react';
 import { Alert, Dimensions, FlatList, ImageBackground, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { G, Path, Svg } from 'react-native-svg';
+ 
 import { auth, db } from '../constants/firebaseConfig';
 
 // Add types at the top:
@@ -24,7 +24,7 @@ type Teacher = {
   avgImprovement?: number;
 };
 
-type ChartData = { label: string; value: number; color: string };
+ 
 
 const bgImage = require('../assets/images/bg.jpg');
 
@@ -50,51 +50,7 @@ export default function AdminDashboard() {
   const windowWidth = Dimensions.get('window').width;
   const numColumns = windowWidth < 400 ? 1 : windowWidth < 600 ? 2 : 3;
 
-  // Pie chart for effectiveness
-  function EffectivenessPieChart({ data }: { data: ChartData[] }) {
-    const size = 120;
-    const radius = size / 2 - 8;
-    const center = size / 2;
-    const total = data.reduce((sum: number, d: ChartData) => sum + d.value, 0) || 1;
-    let startAngle = 0;
-    const arcs = data.map((d: ChartData, idx: number) => {
-      const angle = (d.value / total) * 2 * Math.PI;
-      const endAngle = startAngle + angle;
-      const largeArc = angle > Math.PI ? 1 : 0;
-      const x1 = center + radius * Math.cos(startAngle);
-      const y1 = center + radius * Math.sin(startAngle);
-      const x2 = center + radius * Math.cos(endAngle);
-      const y2 = center + radius * Math.sin(endAngle);
-      const path = [
-        `M ${center} ${center}`,
-        `L ${x1} ${y1}`,
-        `A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`,
-        'Z',
-      ].join(' ');
-      startAngle = endAngle;
-      return { path, color: d.color, label: d.label, value: d.value, idx };
-    });
-    return (
-      <View style={{ alignItems: 'center', marginVertical: 10 }}>
-        <Text style={{ fontWeight: 'bold', fontSize: 16, color: '#222', marginBottom: 6 }}>App Effectiveness</Text>
-        <Svg width={size} height={size}>
-          <G>
-            {arcs.map((arc: any) => (
-              <Path key={arc.label + '-' + arc.idx} d={arc.path} fill={arc.color} />
-            ))}
-          </G>
-        </Svg>
-        <View style={{ flexDirection: 'row', marginTop: 8, gap: 10 }}>
-          {data.map((d: ChartData) => (
-            <View key={d.label} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
-              <View style={{ width: 12, height: 12, backgroundColor: d.color, borderRadius: 6, marginRight: 4 }} />
-              <Text style={{ fontSize: 13, color: '#222' }}>{d.label} ({d.value}%)</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    );
-  }
+  
 
   // Helper to generate next teacher ID
   async function generateNextTeacherId() {
@@ -173,87 +129,15 @@ export default function AdminDashboard() {
     );
   }
 
-  // New Effectiveness Bar Chart component
-  function EffectivenessBarChart({ data }: { data: ChartData[] }) {
-    const windowWidth = Dimensions.get('window').width;
-    const chartWidth = Math.min(windowWidth -90, 420);
-    const barCount = data.length;
-    const barSpacing = 14;
-    const barWidth = Math.max(20, Math.floor((chartWidth - (barCount - 1) * barSpacing) / barCount));
-    const maxValue = Math.max(...data.map((d: ChartData) => d.value), 1);
-    const fontSizeLabel = windowWidth < 400 ? 10 : 14;
-    const fontSizeValue = windowWidth < 400 ? 10 : 13;
-    
-    return (
-      <View style={{ alignItems: 'center', width: '100%' }}>
-        <View style={styles.chartHeader}>
-
-          <Text style={styles.chartTitle}>App Effectiveness Overview</Text>
-        </View>
-        <View style={styles.chartContainer}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 140, width: chartWidth, justifyContent: 'space-between', marginBottom: 16, marginTop: 8 }}>
-            {data.map((d: ChartData, idx: number) => (
-              <View key={d.label + '-' + idx} style={{ alignItems: 'center', flex: 1, marginHorizontal: barSpacing / 2 }}>
-                <View style={styles.barContainer}>
-                  <View 
-                    style={[
-                      styles.bar, 
-                      { 
-                        height: (d.value / maxValue) * 75 + 20, 
-                        width: barWidth, 
-                        backgroundColor: d.color,
-                        shadowColor: d.color,
-                        shadowOpacity: 0.3,
-                        shadowRadius: 4,
-                        shadowOffset: { width: 0, height: 2 },
-                        elevation: 3,
-                      }
-                    ]} 
-                  />
-                </View>
-                <Text
-                  style={[styles.barLabel, { fontSize: fontSizeLabel, minWidth: 48, textAlign: 'center' }]}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                >
-                  {d.label}
-                </Text>
-                <Text style={[styles.barValue, { fontSize: fontSizeValue }]}>{d.value}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-        <Text style={styles.chartDescription}>Distribution of student improvement across all teachers</Text>
-      </View>
-    );
-  }
+  
 
   // Remove the static improvementDistribution and compute it from real data
   // Define green color palette for the bars
-  const improvementBins = [
-    { label: '0-10%', min: 0, max: 10, color: '#e6f4ea' },   // very light mint green
-    { label: '11-25%', min: 11, max: 25, color: '#c2e8cd' }, // pale leafy green
-    { label: '26-50%', min: 26, max: 50, color: '#a0d9b5' }, // soft balanced green
-    { label: '51-75%', min: 51, max: 75, color: '#7ccc98' }, // mild mid-green
-    { label: '76-100%', min: 76, max: 100, color: '#5bbd7d' } // muted emerald green
-  ];
+  
   
 
   // Compute improvement distribution from students
-  const improvementDistribution: ChartData[] = (() => {
-    // Calculate improvement for each student
-    const improvements = students.map(stu => {
-      const pre = typeof stu.preScore === 'number' ? stu.preScore : (stu.preScore?.pattern ?? 0) + (stu.preScore?.numbers ?? 0);
-      const post = typeof stu.postScore === 'number' ? stu.postScore : (stu.postScore?.pattern ?? 0) + (stu.postScore?.numbers ?? 0);
-      return pre > 0 ? Math.round(((post - pre) / pre) * 100) : 0;
-    }).filter(impr => !isNaN(impr) && isFinite(impr) && impr >= 0);
-    // Bin improvements
-    return improvementBins.map(bin => ({
-      label: bin.label,
-      value: improvements.filter(impr => impr >= bin.min && impr <= bin.max).length,
-      color: bin.color,
-    }));
-  })();
+  
 
   // Load teachers from Realtime Database on mount
   useEffect(() => {
@@ -434,10 +318,7 @@ export default function AdminDashboard() {
                 </View>
               </View>
               
-              {/* Enhanced Chart Section */}
-              <View style={styles.chartContainer}>
-                <EffectivenessBarChart data={improvementDistribution} />
-              </View>
+              
               
               {/* Enhanced Section Header */}
               <View style={styles.sectionHeader}>
