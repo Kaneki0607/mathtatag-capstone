@@ -8,7 +8,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { get, onValue, ref, remove, set } from 'firebase/database';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, FlatList, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { G, Path, Svg } from 'react-native-svg';
+import { Circle, G, Path, Svg } from 'react-native-svg';
 import { auth, db } from '../constants/firebaseConfig';
 
 const bgImage = require('../assets/images/bg.jpg');
@@ -183,6 +183,9 @@ export default function TeacherDashboard() {
   const [evaluationShowAllTasks, setEvaluationShowAllTasks] = useState(false);
   // Add state for ghostwriter text visibility
   const [showGhostwriterText, setShowGhostwriterText] = useState(true);
+  // Quarter selection state
+  const [selectedQuarter, setSelectedQuarter] = useState<number>(1);
+  const [quarterMenuOpen, setQuarterMenuOpen] = useState<boolean>(false);
   // Add state for ghostwriter loading statements
   const ghostLoadingStatements = [
     'Analyzing tasks and progress...',
@@ -963,6 +966,63 @@ Generate a concise, insightful AI profile for the teacher. Highlight the student
         setSortAsc(true);
       }
     };
+    // Compute averages and helper lists for the compact dashboard card
+    const preScores = (cls.students || [])
+      .map(s => (s.preScore?.pattern ?? 0) + (s.preScore?.numbers ?? 0))
+      .filter(v => typeof v === 'number' && v > 0);
+    const postScores = (cls.students || [])
+      .map(s => (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0))
+      .filter(v => typeof v === 'number' && v > 0);
+    const avgPre = preScores.length ? Math.round(preScores.reduce((a, b) => a + b, 0) / preScores.length) : 0;
+    const avgPostClass = postScores.length ? Math.round(postScores.reduce((a, b) => a + b, 0) / postScores.length) : 0;
+    const prePercent = Math.max(0, Math.min(100, Math.round((avgPre / 20) * 100)));
+    const postPercent = Math.max(0, Math.min(100, Math.round((avgPostClass / 20) * 100)));
+    const avgPreOutOf10 = Math.round(avgPre / 2);
+    const avgPostOutOf10 = Math.round(avgPostClass / 2);
+    const studentsSortedByPost = [...(cls.students || [])].sort((a, b) => {
+      const aScore = (a.postScore?.pattern ?? 0) + (a.postScore?.numbers ?? 0);
+      const bScore = (b.postScore?.pattern ?? 0) + (b.postScore?.numbers ?? 0);
+      return bScore - aScore;
+    });
+    const topStudents = studentsSortedByPost.filter(s => ((s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0)) > 0).slice(0, 7);
+    const forMonitoring = [...(cls.students || [])]
+      .sort((a, b) => {
+        const aScore = (a.postScore?.pattern ?? 0) + (a.postScore?.numbers ?? 0);
+        const bScore = (b.postScore?.pattern ?? 0) + (b.postScore?.numbers ?? 0);
+        return aScore - bScore;
+      })
+      .slice(0, 7);
+    const weekProgress = [60, 78, 82, 90, 68, 88, 93, 75];
+
+    const Donut = ({ percent, color }: { percent: number; color: string }) => {
+      const size = 68;
+      const stroke = 8;
+      const radius = (size - stroke) / 2;
+      const circumference = 2 * Math.PI * radius;
+      const dashOffset = circumference * (1 - Math.max(0, Math.min(1, percent / 100)));
+      return (
+        <View style={styles.donutWrap}>
+          <Svg width={size} height={size}>
+            <G rotation={-90} originX={size / 2} originY={size / 2}>
+              <Circle cx={size / 2} cy={size / 2} r={radius} stroke="#eee" strokeWidth={stroke} fill="transparent" />
+              <Circle
+                cx={size / 2}
+                cy={size / 2}
+                r={radius}
+                stroke={color}
+                strokeWidth={stroke}
+                strokeDasharray={`${circumference} ${circumference}`}
+                strokeDashoffset={dashOffset}
+                strokeLinecap="round"
+                fill="transparent"
+              />
+            </G>
+          </Svg>
+          <Text style={styles.donutCenterText}>{percent}%</Text>
+        </View>
+      );
+    };
+
     return (
       <LinearGradient colors={['#f7fafc', '#e0f7fa']} style={[styles.classCard, { marginBottom: 15, padding: 2, borderRadius: 32, shadowColor: '#27ae60', shadowOpacity: 0.13, shadowRadius: 18, shadowOffset: { width: 0, height: 8 }, elevation: 10, width: '100%', maxWidth: 540, alignSelf: 'center' }]}> 
         <View style={{ padding: isSmall ? 16 : 24, paddingBottom: isSmall ? 0 : 8 }}>
@@ -1014,36 +1074,79 @@ Generate a concise, insightful AI profile for the teacher. Highlight the student
             </View>
           </View>
           <View style={{ marginTop: isSmall ? 8 : 16 }}>
-            <AnalyticsPieChartWithLegend data={getPerformanceDistribution(cls.students || [], 'pre')} title="Pretest Performance" />
-            <View style={{ height: 10 }} />
-            <AnalyticsPieChartWithLegend data={getPerformanceDistribution(cls.students || [], 'post')} reverse title="Posttest Performance" />
-            {/* Class averages below posttest chart */}
-            <View style={styles.compactCardRow}>
-              {/* Avg. Improvement */}
-              <View style={styles.compactCardCol}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                  <MaterialIcons name="trending-up" size={20} color={avgImprovementColor} style={{ marginRight: 4 }} />
-                  <Text style={styles.compactCardLabel}>Avg. Improvement</Text>
-                  <Pressable onPress={() => Alert.alert('Average Improvement', 'This shows the average percentage improvement from pre-test to post-test for students who took both tests.')}
-                    style={{ marginLeft: 2 }}>
-                    <MaterialIcons name="info-outline" size={13} color="#888" />
-                  </Pressable>
-            </View>
-                <Text style={[styles.compactCardValue, { color: avgImprovementColor }]}>{avgImprovement > 0 ? '+' : ''}{avgImprovement}%</Text>
+            <View style={styles.quarterCard}>
+              <View style={styles.quarterHeaderRow}>
+                <Pressable style={styles.quarterSelectBtn} onPress={() => setQuarterMenuOpen(!quarterMenuOpen)}>
+                  <Text style={styles.quarterTitle}>{`Quarter ${selectedQuarter}`}</Text>
+                  <MaterialIcons name={quarterMenuOpen ? 'expand-less' : 'expand-more'} size={20} color="#222" />
+                </Pressable>
               </View>
-              {/* Divider */}
-              <View style={styles.compactCardDivider} />
-              {/* Avg. Post-test */}
-              <View style={styles.compactCardCol}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                  <MaterialIcons name="bar-chart" size={20} color="#0097a7" style={{ marginRight: 4 }} />
-                  <Text style={styles.compactCardLabel}>Avg. Post-test</Text>
-                  <Pressable onPress={() => Alert.alert('Average Post-test', 'This shows the average post-test score (out of 20) for students who took both tests.')}
-                    style={{ marginLeft: 2 }}>
-                    <MaterialIcons name="info-outline" size={13} color="#888" />
-                  </Pressable>
+              {quarterMenuOpen && (
+                <View style={styles.quarterDropdownMenu}>
+                  {[1, 2, 3, 4].map(q => (
+                    <TouchableOpacity key={`q-${q}`} style={styles.quarterDropdownItem} onPress={() => { setSelectedQuarter(q); setQuarterMenuOpen(false); }}>
+                      <Text style={[styles.quarterDropdownText, selectedQuarter === q ? styles.quarterDropdownTextActive : undefined]}>{`Quarter ${q}`}</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
-                <Text style={[styles.compactCardValue, { color: '#0097a7' }]}>{avgPost}/20</Text>
+              )}
+              <View style={styles.quarterBodyRow}>
+                <View style={styles.ringsRow}>
+                  <View style={styles.ringCol}>
+                    <Donut percent={prePercent} color="#27ae60" />
+                    <Text style={styles.ringLabel}>Avg. Pretest</Text>
+                    <Text style={styles.ringSubLabel}>{avgPreOutOf10}/10</Text>
+                  </View>
+                  <View style={styles.ringCol}>
+                    <Donut percent={postPercent} color="#ff5a5a" />
+                    <Text style={styles.ringLabel}>Avg. Post-test</Text>
+                    <Text style={styles.ringSubLabel}>{avgPostOutOf10}/10</Text>
+                  </View>
+                </View>
+                <View style={styles.weeksCol}>
+                  {weekProgress.map((p, idx) => (
+                    <View key={`week-${idx}`} style={styles.weekRow}>
+                      <Text style={styles.weekLabel}>Week {idx + 1}</Text>
+                      <View style={styles.weekBarBg}>
+                        <View style={[styles.weekBarFill, { width: `${p}%` }]} />
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 12, justifyContent: 'space-between', marginTop: 12 }}>
+              <View style={[styles.listCard, { flex: 1 }]}>
+                <Text style={styles.listTitle}>Top Students</Text>
+                {topStudents.map((s, idx) => {
+                  const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
+                  const score10 = Math.round(post / 2);
+                  return (
+                    <View key={`top-${s.id}`} style={styles.rankRow}>
+                      <View style={[styles.rankBadge, styles.rankBadgeTop]}>
+                        <Text style={styles.rankBadgeText}>{idx + 1}</Text>
+                      </View>
+                      <Text style={styles.rankName}>{s.nickname}</Text>
+                      <Text style={[styles.rankScore, styles.rankScoreTop]}>{score10}/10</Text>
+                    </View>
+                  );
+                })}
+              </View>
+              <View style={[styles.listCard, { flex: 1 }]}>
+                <Text style={[styles.listTitle, { color: '#ff5a5a' }]}>For Monitoring</Text>
+                {forMonitoring.map((s, idx) => {
+                  const post = (s.postScore?.pattern ?? 0) + (s.postScore?.numbers ?? 0);
+                  const score10 = Math.round(post / 2);
+                  return (
+                    <View key={`watch-${s.id}`} style={styles.rankRow}>
+                      <View style={[styles.rankBadge, styles.rankBadgeWatch]}>
+                        <Text style={styles.rankBadgeText}>{idx + 1}</Text>
+                      </View>
+                      <Text style={styles.rankName}>{s.nickname}</Text>
+                      <Text style={[styles.rankScore, styles.rankScoreWatch]}>{score10}/10</Text>
+                    </View>
+                  );
+                })}
               </View>
             </View>
           </View>
@@ -2650,6 +2753,188 @@ const styles = StyleSheet.create({
     backgroundColor: '#e0f7e2',
     marginHorizontal: 12,
     borderRadius: 1,
+  },
+  // New styles for the compact dashboard mock
+  donutWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  donutCenterText: {
+    position: 'absolute',
+    fontWeight: 'bold',
+    color: '#222',
+    fontSize: 14,
+  },
+  quarterCard: {
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+    padding: 12,
+  },
+  quarterHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  quarterTitle: {
+    fontWeight: '800',
+    color: '#222',
+    fontSize: 18,
+  },
+  quarterBodyRow: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    justifyContent: 'flex-start',
+    gap: 10,
+  },
+  ringsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    paddingHorizontal: 0,
+    marginBottom: 12,
+  },
+  ringCol: {
+    width: 118,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+    marginHorizontal: 14,
+  },
+  ringLabel: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#222',
+    textAlign: 'center',
+  },
+  ringSubLabel: {
+    fontSize: 12,
+    color: '#888',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  weeksCol: {
+    flex: 1,
+    paddingHorizontal: 6,
+  },
+  weekRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  weekLabel: {
+    width: 64,
+    fontSize: 13,
+    color: '#222',
+    fontWeight: '700',
+  },
+  weekBarBg: {
+    flex: 1,
+    height: 10,
+    backgroundColor: '#e6e6e6',
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  weekBarFill: {
+    height: 10,
+    backgroundColor: '#27ae60',
+    borderRadius: 6,
+  },
+  quarterSelectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  quarterDropdownMenu: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+    borderRadius: 12,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  quarterDropdownItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  quarterDropdownText: {
+    fontSize: 14,
+    color: '#222',
+    fontWeight: '600',
+  },
+  quarterDropdownTextActive: {
+    color: '#27ae60',
+  },
+  listCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  listTitle: {
+    fontWeight: '800',
+    color: '#27ae60',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  listItem: {
+    fontSize: 13,
+    color: '#222',
+    marginBottom: 6,
+    fontWeight: '600',
+  },
+  rankRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    backgroundColor: '#fafafa',
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  rankBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  rankBadgeTop: {
+    backgroundColor: 'rgba(39,174,96,0.12)',
+  },
+  rankBadgeWatch: {
+    backgroundColor: 'rgba(255,90,90,0.12)',
+  },
+  rankBadgeText: {
+    fontWeight: '800',
+    color: '#222',
+  },
+  rankName: {
+    flex: 1,
+    fontSize: 14,
+    color: '#222',
+    fontWeight: '600',
+  },
+  rankScore: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  rankScoreTop: {
+    color: '#27ae60',
+  },
+  rankScoreWatch: {
+    color: '#ff5a5a',
   },
   modalLabel: {
     fontSize: 15,

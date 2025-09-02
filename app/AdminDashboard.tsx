@@ -10,6 +10,120 @@ import { SafeAreaView } from 'react-native-safe-area-context';
  
 import { auth, db } from '../constants/firebaseConfig';
 
+// GPT API Health Test Function with timeout and restart timing
+const testGptApiHealth = async (): Promise<{ 
+  status: 'live' | 'down' | 'restarting'; 
+  responseTime?: number; 
+  error?: string;
+  restartTime?: number;
+}> => {
+  const startTime = Date.now();
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Request timeout after 5 seconds')), 5000);
+    });
+
+    const fetchPromise = fetch('https://mathtatag-api.onrender.com/gpt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'Hello, are you alive?' }),
+    });
+    
+    const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
+    const endTime = Date.now();
+    const responseTime = endTime - startTime;
+    
+    if (response.ok) {
+      return { status: 'live', responseTime };
+    } else {
+      // If server returns error, assume it's restarting
+      return { 
+        status: 'restarting', 
+        error: 'Server is restarting...',
+        responseTime,
+        restartTime: startTime
+      };
+    }
+  } catch (error: any) {
+    const endTime = Date.now();
+    const responseTime = endTime - startTime;
+    
+    if (error.message.includes('timeout')) {
+      return { 
+        status: 'down', 
+        error: 'Server is down (timeout)',
+        responseTime 
+      };
+    }
+    
+    // For other errors, assume server is restarting
+    return { 
+      status: 'restarting', 
+      error: 'Server is restarting...',
+      responseTime,
+      restartTime: startTime
+    };
+  }
+};
+
+// General Health Endpoint Test Function
+const testGeneralHealth = async (): Promise<{ 
+  status: 'live' | 'down' | 'restarting'; 
+  responseTime?: number; 
+  error?: string;
+  version?: string;
+  gitVersion?: string;
+  restartTime?: number;
+}> => {
+  const startTime = Date.now();
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Request timeout after 5 seconds')), 5000);
+    });
+
+    const fetchPromise = fetch('https://mathtatag-api.onrender.com/health');
+    
+    const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
+    const endTime = Date.now();
+    const responseTime = endTime - startTime;
+    
+    if (response.ok) {
+      const data = await response.json();
+      return { 
+        status: 'live', 
+        responseTime,
+        version: data.version,
+        gitVersion: data.git_version
+      };
+    } else {
+      return { 
+        status: 'restarting', 
+        error: 'Server is restarting...',
+        responseTime,
+        restartTime: startTime
+      };
+    }
+  } catch (error: any) {
+    const endTime = Date.now();
+    const responseTime = endTime - startTime;
+    
+    if (error.message.includes('timeout')) {
+      return { 
+        status: 'down', 
+        error: 'Server is down (timeout)',
+        responseTime 
+      };
+    }
+    
+    return { 
+      status: 'restarting', 
+      error: 'Server is restarting...',
+      responseTime,
+      restartTime: startTime
+    };
+  }
+};
+
 // Add types at the top:
 type Teacher = {
   accountId: string;
@@ -46,11 +160,55 @@ export default function AdminDashboard() {
   const [editTeacher, setEditTeacher] = useState<Teacher | null>(null);
   const [classes, setClasses] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
+  const [gptApiHealth, setGptApiHealth] = useState<{ 
+    status: 'live' | 'down'; 
+    responseTime?: number; 
+    error?: string;
+  } | null>(null);
+  const [generalHealth, setGeneralHealth] = useState<{ 
+    status: 'live' | 'down'; 
+    responseTime?: number; 
+    error?: string;
+    version?: string;
+    gitVersion?: string;
+  } | null>(null);
+  const [isTestingGptApi, setIsTestingGptApi] = useState(false);
+  const [isTestingGeneralHealth, setIsTestingGeneralHealth] = useState(false);
 
   const windowWidth = Dimensions.get('window').width;
-  const numColumns = windowWidth < 400 ? 1 : windowWidth < 600 ? 2 : 3;
+  const windowHeight = Dimensions.get('window').height;
+  const isSmallScreen = windowWidth < 400;
+  const isMediumScreen = windowWidth < 600;
+  const isLargeScreen = windowWidth >= 600;
+  const numColumns = isSmallScreen ? 1 : isMediumScreen ? 2 : 3;
 
   
+
+  // GPT API Health Test Handler
+  const handleGptApiHealthTest = async () => {
+    setIsTestingGptApi(true);
+    try {
+      const result = await testGptApiHealth();
+      setGptApiHealth(result);
+    } catch (error) {
+      setGptApiHealth({ status: 'down', error: 'Test failed' });
+    } finally {
+      setIsTestingGptApi(false);
+    }
+  };
+
+  // General Health Endpoint Test Handler
+  const handleGeneralHealthTest = async () => {
+    setIsTestingGeneralHealth(true);
+    try {
+      const result = await testGeneralHealth();
+      setGeneralHealth(result);
+    } catch (error) {
+      setGeneralHealth({ status: 'down', error: 'Test failed' });
+    } finally {
+      setIsTestingGeneralHealth(false);
+    }
+  };
 
   // Helper to generate next teacher ID
   async function generateNextTeacherId() {
@@ -152,6 +310,27 @@ export default function AdminDashboard() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Test both APIs health on mount
+  useEffect(() => {
+    handleGptApiHealthTest();
+    handleGeneralHealthTest();
+  }, []);
+
+  // Update restart timer every second
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if ((gptApiHealth?.status === 'restarting' && gptApiHealth.restartTime) || 
+        (generalHealth?.status === 'restarting' && generalHealth.restartTime)) {
+      interval = setInterval(() => {
+        // Force re-render to update timer
+        setIsTestingGptApi(prev => prev);
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [gptApiHealth?.status, generalHealth?.status]);
 
   // Add useEffect to fetch classes
   useEffect(() => {
@@ -273,15 +452,15 @@ export default function AdminDashboard() {
           style={{ width: '100%' }}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
-            <View style={{ width: '100%', paddingHorizontal: 12 }}>
+                           <View style={{ width: '100%', paddingHorizontal: isSmallScreen ? 8 : 12 }}>
               {/* Enhanced Header */}
               <BlurView intensity={80} tint="light" style={{ borderRadius: 0, marginBottom: 16, overflow: 'hidden' }}>
                 <View style={[styles.headerWrap, { backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: 0, shadowColor: '#27ae60', shadowOpacity: 0.15, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }]}> 
                   <View style={styles.headerRow}>
                     <View>
-                      <Text style={{ fontSize: 24, fontWeight: '600', color: '#1a1a1a', letterSpacing: 0.5, marginTop:16, marginBottom:-6 }}>Welcome back,</Text>
-                      <Text style={{ fontSize: 26, fontWeight: '800', color: '#27ae60', marginTop: 4, letterSpacing: 0.5 }}>Administrator</Text>
-                      <Text style={{ fontSize: 14, color: '#666', marginTop: 4, fontWeight: '500' }}>Manage your educational platform</Text>
+                                           <Text style={{ fontSize: isSmallScreen ? 20 : 24, fontWeight: '600', color: '#1a1a1a', letterSpacing: 0.5, marginTop:16, marginBottom:-6 }}>Welcome back,</Text>
+                       <Text style={{ fontSize: isSmallScreen ? 22 : 26, fontWeight: '800', color: '#27ae60', marginTop: 4, letterSpacing: 0.5 }}>Administrator</Text>
+                       <Text style={{ fontSize: isSmallScreen ? 12 : 14, color: '#666', marginTop: 4, fontWeight: '500' }}>Manage your educational platform</Text>
                     </View>
                     <TouchableOpacity style={styles.profileBtn} onPress={() => setShowProfileMenu(true)}>
                       <MaterialCommunityIcons name="account-cog" size={32} color="#27ae60" />
@@ -294,111 +473,322 @@ export default function AdminDashboard() {
               <View style={styles.statsModernCard}>
                 <View style={styles.statsModernRow}>
                   <View style={styles.statsModernItem}>
-                    <AntDesign name="user" size={32} color="#27ae60" style={styles.statsModernIcon} />
-                    <Text style={styles.statsModernValue}>{stats.totalTeachers}</Text>
-                    <Text style={styles.statsModernLabel}>Teachers</Text>
-                  </View>
-                  <View style={styles.statsModernItem}>
-                    <MaterialCommunityIcons name="google-classroom" size={32} color="#27ae60" style={styles.statsModernIcon} />
-                    <Text style={styles.statsModernValue}>{stats.totalClasses}</Text>
-                    <Text style={styles.statsModernLabel}>Classes</Text>
-                  </View>
-                </View>
-                <View style={styles.statsModernRow}>
-                  <View style={styles.statsModernItem}>
-                    <MaterialCommunityIcons name="account-group" size={32} color="#27ae60" style={styles.statsModernIcon} />
-                    <Text style={styles.statsModernValue}>{stats.totalStudents}</Text>
-                    <Text style={styles.statsModernLabel}>Students</Text>
-                  </View>
-                  <View style={styles.statsModernItem}>
-                    <MaterialIcons name="trending-up" size={32} color="#27ae60" style={styles.statsModernIcon} />
-                    <Text style={styles.statsModernValue}>{formatImprovement(stats.avgImprovement)}</Text>
-                    <Text style={styles.statsModernLabel}>Avg. Impr.</Text>
+                                         <AntDesign name="user" size={isSmallScreen ? 28 : 32} color="#27ae60" style={styles.statsModernIcon} />
+                     <Text style={[styles.statsModernValue, { fontSize: isSmallScreen ? 18 : 22 }]}>{stats.totalTeachers}</Text>
+                     <Text style={[styles.statsModernLabel, { fontSize: isSmallScreen ? 11 : 13 }]}>Teachers</Text>
+                   </View>
+                   <View style={styles.statsModernItem}>
+                     <MaterialCommunityIcons name="google-classroom" size={isSmallScreen ? 28 : 32} color="#27ae60" style={styles.statsModernIcon} />
+                     <Text style={[styles.statsModernValue, { fontSize: isSmallScreen ? 18 : 22 }]}>{stats.totalClasses}</Text>
+                     <Text style={[styles.statsModernLabel, { fontSize: isSmallScreen ? 11 : 13 }]}>Classes</Text>
+                   </View>
+                 </View>
+                 <View style={styles.statsModernRow}>
+                   <View style={styles.statsModernItem}>
+                     <MaterialCommunityIcons name="account-group" size={isSmallScreen ? 28 : 32} color="#27ae60" style={styles.statsModernIcon} />
+                     <Text style={[styles.statsModernValue, { fontSize: isSmallScreen ? 18 : 22 }]}>{stats.totalStudents}</Text>
+                     <Text style={[styles.statsModernLabel, { fontSize: isSmallScreen ? 11 : 13 }]}>Students</Text>
+                   </View>
+                   <View style={styles.statsModernItem}>
+                     <MaterialIcons name="trending-up" size={isSmallScreen ? 28 : 32} color="#27ae60" style={styles.statsModernIcon} />
+                     <Text style={[styles.statsModernValue, { fontSize: isSmallScreen ? 18 : 22 }]}>{formatImprovement(stats.avgImprovement)}</Text>
+                     <Text style={[styles.statsModernLabel, { fontSize: isSmallScreen ? 11 : 13 }]}>Avg. Impr.</Text>
                   </View>
                 </View>
               </View>
               
-              
+                                                           {/* Combined API Health Status Section */}
+                <View style={styles.apiHealthCard}>
+                  <View style={styles.apiHealthHeader}>
+                                         <MaterialCommunityIcons name="server-network" size={isSmallScreen ? 20 : 24} color="#27ae60" />
+                     <Text style={[styles.apiHealthTitle, { fontSize: isSmallScreen ? 14 : 16 }]}>API Health Status</Text>
+                     <TouchableOpacity 
+                       style={[styles.apiHealthTestBtn, (isTestingGptApi || isTestingGeneralHealth) && styles.apiHealthTestBtnDisabled]} 
+                       onPress={() => {
+                         handleGptApiHealthTest();
+                         handleGeneralHealthTest();
+                       }}
+                       disabled={isTestingGptApi || isTestingGeneralHealth}
+                     >
+                       <MaterialIcons name="refresh" size={isSmallScreen ? 18 : 20} color="#fff" />
+                       <Text style={[styles.apiHealthTestBtnText, { fontSize: isSmallScreen ? 10 : 12 }]}>
+                         {(isTestingGptApi || isTestingGeneralHealth) ? 'Testing...' : 'Test All'}
+                       </Text>
+                     </TouchableOpacity>
+                  </View>
+                  
+                  <View style={styles.apiHealthContent}>
+                    {/* GPT Endpoint Row */}
+                    <View style={styles.apiHealthRow}>
+                                             <View style={styles.apiHealthEndpointHeader}>
+                         <MaterialCommunityIcons name="robot" size={isSmallScreen ? 18 : 20} color="#27ae60" />
+                         <Text style={[styles.apiHealthEndpointTitle, { fontSize: isSmallScreen ? 13 : 15 }]}>GPT Endpoint</Text>
+                       </View>
+                      
+                      {gptApiHealth ? (
+                        <View style={styles.apiHealthEndpointStatus}>
+                                                     <View style={[styles.apiHealthIndicator, 
+                             gptApiHealth.status === 'live' 
+                               ? styles.apiHealthLive 
+                               : gptApiHealth.status === 'restarting' 
+                                 ? styles.apiHealthRestarting 
+                                 : styles.apiHealthDown
+                           ]}>
+                             <MaterialIcons 
+                               name={
+                                 gptApiHealth.status === 'live' 
+                                   ? 'check-circle' 
+                                   : gptApiHealth.status === 'restarting'
+                                     ? 'refresh'
+                                     : 'error'
+                               } 
+                               size={16} 
+                               color="#fff" 
+                             />
+                             <Text style={styles.apiHealthStatusText}>
+                               {gptApiHealth.status === 'live' 
+                                 ? 'LIVE' 
+                                 : gptApiHealth.status === 'restarting'
+                                   ? 'RESTARTING'
+                                   : 'DOWN'
+                               }
+                             </Text>
+                           </View>
+                           {gptApiHealth.status === 'restarting' && gptApiHealth.restartTime && (
+                             <Text style={styles.apiHealthRestartTime}>
+                               Restarting... {Math.round((Date.now() - gptApiHealth.restartTime) / 1000)}s
+                             </Text>
+                           )}
+                          
+                          {gptApiHealth.status === 'live' && gptApiHealth.responseTime && (
+                            <Text style={styles.apiHealthResponseTimeInline}>
+                              {gptApiHealth.responseTime}ms
+                            </Text>
+                          )}
+                        </View>
+                      ) : (
+                        <Text style={styles.apiHealthLoadingText}>Testing...</Text>
+                      )}
+                    </View>
+                    
+                    {/* General Health Endpoint Row */}
+                    <View style={styles.apiHealthRow}>
+                                             <View style={styles.apiHealthEndpointHeader}>
+                         <MaterialCommunityIcons name="server" size={isSmallScreen ? 18 : 20} color="#27ae60" />
+                         <Text style={[styles.apiHealthEndpointTitle, { fontSize: isSmallScreen ? 13 : 15 }]}>General Health</Text>
+                       </View>
+                      
+                      {generalHealth ? (
+                        <View style={styles.apiHealthEndpointStatus}>
+                          <View style={styles.apiHealthInfoRow}>
+                                                         <View style={[styles.apiHealthIndicator, 
+                               generalHealth.status === 'live' 
+                                 ? styles.apiHealthLive 
+                                 : generalHealth.status === 'restarting' 
+                                   ? styles.apiHealthRestarting 
+                                   : styles.apiHealthDown
+                             ]}>
+                               <MaterialIcons 
+                                 name={
+                                   generalHealth.status === 'live' 
+                                     ? 'check-circle' 
+                                     : generalHealth.status === 'restarting'
+                                       ? 'refresh'
+                                       : 'error'
+                                 } 
+                                 size={16} 
+                                 color="#fff" 
+                               />
+                               <Text style={styles.apiHealthStatusText}>
+                                 {generalHealth.status === 'live' 
+                                   ? 'LIVE' 
+                                   : generalHealth.status === 'restarting'
+                                     ? 'RESTARTING'
+                                     : 'DOWN'
+                                 }
+                               </Text>
+                             </View>
+                             {generalHealth.status === 'restarting' && generalHealth.restartTime && (
+                               <Text style={styles.apiHealthRestartTime}>
+                                 Restarting... {Math.round((Date.now() - generalHealth.restartTime) / 1000)}s
+                               </Text>
+                             )}
+                            
+                                                         {generalHealth.status === 'live' && (
+                               <View style={[styles.apiHealthDetails, {
+                                 flexDirection: isSmallScreen ? 'column' : 'row',
+                                 gap: isSmallScreen ? 8 : 16
+                               }]}>
+                                 {generalHealth.version && (
+                                   <View style={styles.apiHealthDetailItem}>
+                                     <Text style={[styles.apiHealthDetailLabel, { 
+                                       fontSize: isSmallScreen ? 9 : 10 
+                                     }]}>Version:</Text>
+                                     <Text style={[styles.apiHealthDetailValue, { 
+                                       fontSize: isSmallScreen ? 10 : 12 
+                                     }]}>{generalHealth.version}</Text>
+                                   </View>
+                                 )}
+                                 {generalHealth.gitVersion && (
+                                   <View style={styles.apiHealthDetailItem}>
+                                     <Text style={[styles.apiHealthDetailLabel, { 
+                                       fontSize: isSmallScreen ? 9 : 10 
+                                     }]}>Git:</Text>
+                                     <Text style={[styles.apiHealthDetailValue, { 
+                                       fontSize: isSmallScreen ? 10 : 12 
+                                     }]}>{generalHealth.gitVersion}</Text>
+                                   </View>
+                                 )}
+                                 {generalHealth.responseTime && (
+                                   <View style={styles.apiHealthDetailItem}>
+                                     <Text style={[styles.apiHealthDetailLabel, { 
+                                       fontSize: isSmallScreen ? 9 : 10 
+                                     }]}>Response:</Text>
+                                     <Text style={[styles.apiHealthDetailValue, { 
+                                       fontSize: isSmallScreen ? 10 : 12 
+                                     }]}>{generalHealth.responseTime}ms</Text>
+                                   </View>
+                                 )}
+                               </View>
+                             )}
+                          </View>
+                          
+                          {generalHealth.status === 'down' && generalHealth.error && (
+                            <View style={styles.apiHealthError}>
+                              <Text style={styles.apiHealthErrorLabel}>Error:</Text>
+                              <Text style={styles.apiHealthErrorText}>{generalHealth.error}</Text>
+                            </View>
+                          )}
+                        </View>
+                      ) : (
+                        <Text style={styles.apiHealthLoadingText}>Testing...</Text>
+                      )}
+                    </View>
+                  </View>
+                </View>
               
               {/* Enhanced Section Header */}
-              <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleContainer}>
-                  <Text style={styles.sectionTitle}>All Teachers</Text>
-                </View>
-                <TouchableOpacity onPress={() => setModalVisible(true)} style={styles.addButton}>
-                  <AntDesign name="adduser" size={20} color="#fff" />
-                  <Text style={styles.addButtonText}>Add Teacher</Text>
-                </TouchableOpacity>
-              </View>
+                             <View style={styles.sectionHeader}>
+                 <View style={styles.sectionTitleContainer}>
+                   <Text style={[styles.sectionTitle, { 
+                     fontSize: isSmallScreen ? 18 : 20 
+                   }]}>All Teachers</Text>
+                 </View>
+                 <TouchableOpacity onPress={() => setModalVisible(true)} style={[styles.addButton, {
+                   paddingHorizontal: isSmallScreen ? 12 : 16,
+                   paddingVertical: isSmallScreen ? 6 : 8
+                 }]}>
+                   <AntDesign name="adduser" size={isSmallScreen ? 18 : 20} color="#fff" />
+                   <Text style={[styles.addButtonText, { 
+                     fontSize: isSmallScreen ? 12 : 14 
+                   }]}>Add Teacher</Text>
+                 </TouchableOpacity>
+               </View>
             </View>
           }
           data={uniqueTeacherStats}
           keyExtractor={(item, index) => item.accountId || item.teacherId || String(index)}
           numColumns={2}
           columnWrapperStyle={{ justifyContent: 'flex-start' }}
-          contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: 40 }}
+                     contentContainerStyle={{ paddingHorizontal: isSmallScreen ? 4 : 8, paddingBottom: 40 }}
           renderItem={({ item }) => (
-            <TouchableOpacity
-              onPress={() => { setSelectedTeacher(item); setEditTeacher(item); setEditMode(false); }}
-              activeOpacity={0.85}
-              style={styles.teacherGridCard}
-            >
+                         <TouchableOpacity
+               onPress={() => { setSelectedTeacher(item); setEditTeacher(item); setEditMode(false); }}
+               activeOpacity={0.85}
+               style={[styles.teacherGridCard, { 
+                 width: isSmallScreen ? '48%' : '47.5%',
+                 padding: isSmallScreen ? 12 : 16,
+                 marginRight: isSmallScreen ? 4 : 8,
+                 marginLeft: isSmallScreen ? 2 : 4
+               }]}
+             >
               <View style={styles.teacherCardHeader}>
-                <View style={styles.teacherAvatar}>
-                  <Text style={styles.teacherAvatarText}>{item.name.charAt(0).toUpperCase()}</Text>
-                </View>
-                <View style={styles.teacherCardInfo}>
-                  <Text style={styles.teacherGridName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.teacherGridSchool} numberOfLines={1}>{item.school}</Text>
-                  <Text style={styles.teacherGridId}>ID: {item.teacherId}</Text>
-                </View>
+                                 <View style={[styles.teacherAvatar, { 
+                   width: isSmallScreen ? 32 : 40, 
+                   height: isSmallScreen ? 32 : 40, 
+                   borderRadius: isSmallScreen ? 16 : 20 
+                 }]}>
+                   <Text style={[styles.teacherAvatarText, { 
+                     fontSize: isSmallScreen ? 14 : 18 
+                   }]}>{item.name.charAt(0).toUpperCase()}</Text>
+                 </View>
+                                 <View style={styles.teacherCardInfo}>
+                   <Text style={[styles.teacherGridName, { 
+                     fontSize: isSmallScreen ? 13 : 15 
+                   }]} numberOfLines={1}>{item.name}</Text>
+                   <Text style={[styles.teacherGridSchool, { 
+                     fontSize: isSmallScreen ? 10 : 12 
+                   }]} numberOfLines={1}>{item.school}</Text>
+                   <Text style={[styles.teacherGridId, { 
+                     fontSize: isSmallScreen ? 8 : 10 
+                   }]}>ID: {item.teacherId}</Text>
+                 </View>
               </View>
-              <View style={styles.teacherCardStats}>
-                <View style={styles.teacherStatItem}>
-                  <MaterialCommunityIcons name="account-group" size={16} color="#27ae60" />
-                  <Text style={styles.teacherStatValue}>{(item.numStudents).toString().padStart(1,'0')}</Text>
-                  <Text
-                    style={[styles.teacherStatLabel, { maxWidth: 90, textAlign: 'center' }]}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    Students
-                  </Text>
-                </View>
-                <View style={styles.teacherStatItem}>
-                  <MaterialCommunityIcons name="google-classroom" size={16} color="#27ae60" />
-                  <Text style={styles.teacherStatValue}>{(item.numClasses).toString().padStart(1,'0')}</Text>
-                  <Text
-                    style={[styles.teacherStatLabel, { maxWidth: 90, textAlign: 'center' }]}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    Classes
-                  </Text>
-                </View>
-                <View style={styles.teacherStatItem}>
-                  <MaterialIcons
-                    name={item.avgImprovement > 0 ? 'trending-up' : item.avgImprovement < 0 ? 'trending-down' : 'trending-flat'}
-                    size={16}
-                    color={item.avgImprovement > 0 ? '#27ae60' : item.avgImprovement < 0 ? '#ff5a5a' : '#ffe066'}
-                  />
-                  <Text
-                    style={[
-                      styles.teacherStatValue,
-                      { color: item.avgImprovement > 0 ? '#27ae60' : item.avgImprovement < 0 ? '#ff5a5a' : '#ffe066' },
-                    ]}
-                  >
-                    {formatImprovement(item.avgImprovement)}
-                  </Text>
-                  <Text
-                    style={[styles.teacherStatLabel, { maxWidth: 90, textAlign: 'center' }]}
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                  >
-                    Improvement
-                  </Text>
-                </View>
-              </View>
+                               <View style={styles.teacherCardStats}>
+                   <View style={styles.teacherStatItem}>
+                     <MaterialCommunityIcons name="account-group" size={isSmallScreen ? 14 : 16} color="#27ae60" />
+                     <Text style={[styles.teacherStatValue, { 
+                       fontSize: isSmallScreen ? 14 : 16 
+                     }]}>{(item.numStudents).toString().padStart(1,'0')}</Text>
+                     <Text
+                       style={[styles.teacherStatLabel, { 
+                         maxWidth: isSmallScreen ? 70 : 90, 
+                         textAlign: 'center',
+                         fontSize: isSmallScreen ? 8 : 10
+                       }]}
+                       numberOfLines={1}
+                       ellipsizeMode="tail"
+                     >
+                       Students
+                     </Text>
+                   </View>
+                   <View style={styles.teacherStatItem}>
+                     <MaterialCommunityIcons name="google-classroom" size={isSmallScreen ? 14 : 16} color="#27ae60" />
+                     <Text style={[styles.teacherStatValue, { 
+                       fontSize: isSmallScreen ? 14 : 16 
+                     }]}>{(item.numClasses).toString().padStart(1,'0')}</Text>
+                     <Text
+                       style={[styles.teacherStatLabel, { 
+                         maxWidth: isSmallScreen ? 70 : 90, 
+                         textAlign: 'center',
+                         fontSize: isSmallScreen ? 8 : 10
+                       }]}
+                       numberOfLines={1}
+                       ellipsizeMode="tail"
+                     >
+                       Classes
+                     </Text>
+                   </View>
+                   <View style={styles.teacherStatItem}>
+                     <MaterialIcons
+                       name={item.avgImprovement > 0 ? 'trending-up' : item.avgImprovement < 0 ? 'trending-down' : 'trending-flat'}
+                       size={isSmallScreen ? 14 : 16}
+                       color={item.avgImprovement > 0 ? '#27ae60' : item.avgImprovement < 0 ? '#ff5a5a' : '#ffe066'}
+                     />
+                     <Text
+                       style={[
+                         styles.teacherStatValue,
+                         { 
+                           color: item.avgImprovement > 0 ? '#27ae60' : item.avgImprovement < 0 ? '#ff5a5a' : '#ffe066',
+                           fontSize: isSmallScreen ? 14 : 16
+                         },
+                       ]}
+                     >
+                       {formatImprovement(item.avgImprovement)}
+                     </Text>
+                     <Text
+                       style={[styles.teacherStatLabel, { 
+                         maxWidth: isSmallScreen ? 70 : 90, 
+                         textAlign: 'center',
+                         fontSize: isSmallScreen ? 8 : 10
+                       }]}
+                       numberOfLines={1}
+                       ellipsizeMode="tail"
+                     >
+                       Improvement
+                     </Text>
+                   </View>
+                 </View>
             </TouchableOpacity>
           )}
         />
@@ -1179,10 +1569,262 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginLeft: 6,
   },
-  statsModernCard: { backgroundColor: '#fff', marginTop: -22, borderRadius: 20, padding: 18, marginVertical: 0, shadowColor: '#27ae60', shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 3, },
+  statsModernCard: { 
+    backgroundColor: '#fff', 
+    marginTop: -22, 
+    borderRadius: 20, 
+    padding: 18, 
+    marginVertical: 0, 
+    shadowColor: '#27ae60', 
+    shadowOpacity: 0.08, 
+    shadowRadius: 12, 
+    shadowOffset: { width: 0, height: 4 }, 
+    elevation: 3,
+  },
   statsModernRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, },
   statsModernItem: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10, },
   statsModernIcon: { marginBottom: 2, },
   statsModernValue: { fontSize: 22, fontWeight: 'bold', color: '#27ae60', marginBottom: 2, },
   statsModernLabel: { fontSize: 13, color: '#666', fontWeight: '600', },
+  // API Health Test Styles
+  apiHealthCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    shadowColor: '#27ae60',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#e6e6e6',
+  },
+  apiHealthHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  apiHealthTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#222',
+    flex: 1,
+    marginLeft: 8,
+  },
+  apiHealthTestBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#27ae60',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    shadowColor: '#27ae60',
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  apiHealthTestBtnDisabled: {
+    backgroundColor: '#ccc',
+    shadowOpacity: 0.1,
+  },
+  apiHealthTestBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 12,
+    marginLeft: 4,
+  },
+  apiHealthContent: {
+    minHeight: 60,
+  },
+  apiHealthStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+  },
+  apiHealthIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    minWidth: 80,
+    justifyContent: 'center',
+  },
+  apiHealthLive: {
+    backgroundColor: '#27ae60',
+  },
+  apiHealthDown: {
+    backgroundColor: '#ff5a5a',
+  },
+  apiHealthRestarting: {
+    backgroundColor: '#f59e0b',
+  },
+  apiHealthRestartTime: {
+    fontSize: 12,
+    color: '#f59e0b',
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  apiHealthStatusText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
+    marginLeft: 4,
+    textTransform: 'uppercase',
+  },
+  apiHealthInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  apiHealthResponseTime: {
+    alignItems: 'center',
+    backgroundColor: '#f0f8f0',
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 120,
+  },
+  apiHealthResponseTimeLabel: {
+    fontSize: 11,
+    color: '#666',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  apiHealthResponseTimeValue: {
+    fontSize: 16,
+    color: '#27ae60',
+    fontWeight: '700',
+  },
+  apiHealthVersion: {
+    alignItems: 'center',
+    backgroundColor: '#e8f4fd',
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 100,
+  },
+  apiHealthVersionLabel: {
+    fontSize: 11,
+    color: '#666',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  apiHealthVersionValue: {
+    fontSize: 14,
+    color: '#0097a7',
+    fontWeight: '700',
+  },
+  apiHealthGitVersion: {
+    alignItems: 'center',
+    backgroundColor: '#fff3e0',
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 120,
+  },
+  apiHealthGitVersionLabel: {
+    fontSize: 11,
+    color: '#666',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  apiHealthGitVersionValue: {
+    fontSize: 12,
+    color: '#ff9800',
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  apiHealthError: {
+    flex: 1,
+    backgroundColor: '#fff5f5',
+    borderRadius: 12,
+    padding: 8,
+    marginLeft: 12,
+    borderWidth: 1,
+    borderColor: '#fed7d7',
+  },
+  apiHealthErrorLabel: {
+    fontSize: 11,
+    color: '#c53030',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  apiHealthErrorText: {
+    fontSize: 12,
+    color: '#c53030',
+    fontWeight: '500',
+  },
+  apiHealthLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+  },
+  apiHealthLoadingText: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  // Combined API Health Layout Styles
+  apiHealthRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  apiHealthEndpointHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  apiHealthEndpointTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
+    marginLeft: 8,
+  },
+  apiHealthEndpointStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  apiHealthInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  apiHealthDetails: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  apiHealthDetailItem: {
+    alignItems: 'center',
+  },
+  apiHealthDetailLabel: {
+    fontSize: 10,
+    color: '#666',
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  apiHealthDetailValue: {
+    fontSize: 12,
+    color: '#27ae60',
+    fontWeight: '600',
+  },
+  apiHealthResponseTimeInline: {
+    fontSize: 14,
+    color: '#27ae60',
+    fontWeight: '600',
+    backgroundColor: '#f0f8f0',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
 }); 
